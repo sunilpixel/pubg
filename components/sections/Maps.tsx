@@ -32,7 +32,11 @@ export function Maps() {
   // useRevealOnce for why. The previous ScrollTrigger version could leave the
   // cards permanently at opacity 0 when its start position was mis-measured
   // because of the pinned sections above this one.
-  useRevealOnce(sectionRef, ".map-card", { y: 48, duration: 0.7, stagger: 0.05 });
+  useRevealOnce(sectionRef, ".map-card", {
+    y: 48,
+    duration: 0.7,
+    stagger: 0.05,
+  });
 
   useGsapContext(
     () => {
@@ -47,7 +51,6 @@ export function Maps() {
           start: "top bottom",
           end: "bottom top",
           scrub: true,
-          markers: true,
         },
       });
     },

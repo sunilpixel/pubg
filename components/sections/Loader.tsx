@@ -29,7 +29,7 @@ const BOOT_LINES = [
  * replaced wholesale under `prefers-reduced-motion`.
  */
 export function Loader() {
-  const { markReady } = useExperience();
+  const { markReady, markPreparing } = useExperience();
   const reduced = usePrefersReducedMotion();
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -223,6 +223,11 @@ export function Loader() {
       const boom = 5.3;
 
       tl
+        // Bring the battlefield online behind the curtain, on the charge-up.
+        // Creating the WebGL context and compiling its shaders blocks the main
+        // thread; doing it here buries that cost under the loudest moment of
+        // the sequence instead of dropping it on the frame the hero appears.
+        .call(markPreparing, undefined, boom - 0.5)
         // Charge-up: the frame contracts and the light drains before the blast.
         .to(q('.weapon-stage'), { scale: 0.97, duration: 0.35, ease: 'power2.in' }, boom - 0.4)
         .to(q('.vignette-charge'), { opacity: 1, duration: 0.35 }, boom - 0.4)
@@ -304,7 +309,7 @@ export function Loader() {
       };
     },
     rootRef,
-    [reduced, finish],
+    [reduced, finish, markPreparing],
   );
 
   // Escape skips ahead — a long cold open must always be escapable.
@@ -321,7 +326,13 @@ export function Loader() {
   return (
     <div
       ref={rootRef}
-      className="fixed inset-0 z-[200] overflow-hidden bg-void"
+      // `loader-root` is what the CSS hook below hangs off. The weapon parts
+      // and HUD must be hidden in the SERVER-RENDERED markup, because the
+      // browser paints that HTML before React hydrates — and GSAP's opening
+      // gsap.set() calls cannot run until hydration. Without a CSS initial
+      // state the fully assembled weapon is painted first, and the assembly
+      // animation then appears to start over. See app/globals.css.
+      className="loader-root fixed inset-0 z-[200] overflow-hidden bg-void"
       role="status"
       aria-live="polite"
       aria-label="Loading combat experience"

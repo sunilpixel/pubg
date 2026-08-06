@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { gsap, ScrollTrigger } from "@/lib/gsap";
 import { useGsapContext } from "@/hooks/useGsapContext";
+import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
 import { useIsMobile, usePrefersReducedMotion } from "@/hooks/useMediaQuery";
 import { detectDeviceTier, type DeviceTier } from "@/lib/deviceTier";
 import { useExperience } from "@/components/providers/ExperienceProvider";
@@ -41,7 +42,7 @@ export function Hero() {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const progressRef = useRef(0);
 
-  const { ready } = useExperience();
+  const { ready, preparing } = useExperience();
   const reduced = usePrefersReducedMotion();
   const isMobile = useIsMobile();
 
@@ -53,7 +54,10 @@ export function Hero() {
   const [tier, setTier] = useState<DeviceTier>("high");
   useEffect(() => setTier(detectDeviceTier()), []);
 
-  const show3D = ready && !reduced && tier !== "off";
+  // Mounts on `preparing` — during the loader's detonation, behind the curtain
+  // — rather than waiting for `ready`. By the time the iris opens the context
+  // exists and the shaders are compiled, so the reveal frame has no work to do.
+  const show3D = (ready || preparing) && !reduced && tier !== "off";
   const quality: "high" | "low" = isMobile || tier === "low" ? "low" : "high";
 
   // NOTE: there is deliberately no pointer-parallax on the stage. It used to
@@ -120,41 +124,81 @@ export function Hero() {
     };
   }, [ready, reduced, tier]);
 
-  /* ---------------- Entrance: plays once the loader hands off ------------- */
-  useEffect(() => {
-    if (!ready || reduced) return;
+  /* ---------------- Entrance ----------------------------------------------
+   * Built on mount and held paused; played when the loader hands off.
+   *
+   * This used to be created only once `ready` flipped, which produced a visible
+   * flash: the loader's iris wipe reveals the hero *while it is still playing*,
+   * but `markReady()` only fires on that timeline's `onComplete`. So for the
+   * whole length of the wipe the hero sat underneath fully composed, and only
+   * afterwards did `gsap.from()` snap everything back to its start values and
+   * animate — the content appeared, jumped backwards, then animated in.
+   *
+   * The hidden state is applied with explicit `gsap.set()` calls rather than
+   * relying on `from()`. Inside a paused timeline, and with position offsets
+   * like "-=0.85", `from()` does not reliably render its start values on
+   * creation — which is why an earlier attempt at this fix still flashed.
+   * `set()` applies immediately and unconditionally, so the hero is guaranteed
+   * to be in its hidden state before the first paint.
+   *
+   * A layout effect is required here: a plain `useEffect` runs after paint,
+   * which is precisely the frame the flash was escaping through.
+   */
+  const entranceRef = useRef<gsap.core.Timeline | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    if (reduced) return;
 
     const ctx = gsap.context(() => {
-      const tl = gsap.timeline({ defaults: { ease: "cinema" } });
-
-      tl.from(".hero-line", {
+      // Hidden state — applied now, before anything is painted.
+      gsap.set(".hero-line", {
         yPercent: 118,
         rotateX: 48,
         opacity: 0,
+        transformOrigin: "50% 100% -80px",
+      });
+      gsap.set(".hero-rule", { scaleX: 0, transformOrigin: "left center" });
+      gsap.set(".hero-copy", { y: 42, opacity: 0 });
+      gsap.set(".hero-cta", { y: 34, opacity: 0 });
+      gsap.set(".hero-hud-item", { y: 24, opacity: 0 });
+      gsap.set(".hero-scroll", { opacity: 0, y: -18 });
+
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "cinema" } });
+      entranceRef.current = tl;
+
+      tl.to(".hero-line", {
+        yPercent: 0,
+        rotateX: 0,
+        opacity: 1,
         duration: 1.35,
         stagger: 0.11,
-        transformOrigin: "50% 100% -80px",
       })
-        .from(
-          ".hero-rule",
-          { scaleX: 0, duration: 1.1, transformOrigin: "left center" },
-          "-=0.85",
-        )
-        .from(".hero-copy", { y: 42, opacity: 0, duration: 1 }, "-=0.9")
-        .from(
+        // opacity restored explicitly: the pre-hydration CSS hides this by
+        // opacity, but the animation itself only scales it.
+        .to(".hero-rule", { scaleX: 1, opacity: 1, duration: 1.1 }, "-=0.85")
+        .to(".hero-copy", { y: 0, opacity: 1, duration: 1 }, "-=0.9")
+        .to(
           ".hero-cta",
-          { y: 34, opacity: 0, duration: 0.85, stagger: 0.1 },
+          { y: 0, opacity: 1, duration: 0.85, stagger: 0.1 },
           "-=0.75",
         )
-        .from(
+        .to(
           ".hero-hud-item",
-          { y: 24, opacity: 0, duration: 0.7, stagger: 0.07 },
+          { y: 0, opacity: 1, duration: 0.7, stagger: 0.07 },
           "-=0.7",
         )
-        .from(".hero-scroll", { opacity: 0, y: -18, duration: 0.8 }, "-=0.5");
+        .to(".hero-scroll", { opacity: 1, y: 0, duration: 0.8 }, "-=0.5");
     }, sectionRef);
 
-    return () => ctx.revert();
+    return () => {
+      ctx.revert();
+      entranceRef.current = null;
+    };
+  }, [reduced]);
+
+  // Release it the moment the loader is done.
+  useEffect(() => {
+    if (ready && !reduced) entranceRef.current?.play();
   }, [ready, reduced]);
 
   /* ---------------- Pinned cinematic scroll ------------------------------- */

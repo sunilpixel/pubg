@@ -135,6 +135,54 @@
   [data-anim-hidden] {
     opacity: 0;
   }
+
+  /* ------------------------------------------------------------------------
+     Pre-hydration initial states.
+
+     These pages are server-rendered, so the browser paints the HTML before
+     React hydrates and before any GSAP code has run. Anything whose opening
+     state is established by `gsap.set()` will therefore be painted in its
+     FINAL state first — the loader shows a fully assembled weapon, the hero
+     shows its finished masthead — and the animation then appears to restart.
+
+     A layout effect does not help: it still runs after hydration, which is
+     after that first paint. The only thing that can win is CSS shipped in the
+     same response as the markup, which is what these rules are.
+
+     GSAP writes inline styles, and inline beats a stylesheet rule, so the
+     animations take over cleanly without needing !important anywhere.
+     ---------------------------------------------------------------------- */
+
+  .loader-root .part,
+  .loader-root .hud,
+  .loader-root .loader-smoke {
+    opacity: 0;
+  }
+
+  #hero .hero-line,
+  #hero .hero-rule,
+  #hero .hero-copy,
+  #hero .hero-cta,
+  #hero .hero-hud-item,
+  #hero .hero-scroll {
+    opacity: 0;
+  }
+
+  /* With motion reduced neither timeline is built, so nothing would ever
+     restore these. Show them as-is. */
+  @media (prefers-reduced-motion: reduce) {
+    .loader-root .part,
+    .loader-root .hud,
+    .loader-root .loader-smoke,
+    #hero .hero-line,
+    #hero .hero-rule,
+    #hero .hero-copy,
+    #hero .hero-cta,
+    #hero .hero-hud-item,
+    #hero .hero-scroll {
+      opacity: 1;
+    }
+  }
 }
 
 /* ============================================================================
