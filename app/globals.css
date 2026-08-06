@@ -155,6 +155,11 @@
    Material utilities
    ========================================================================== */
 
+/* backdrop-filter is the single most expensive property here: it forces the
+   compositor to copy and blur everything painted behind the element, every
+   frame it moves. Radii are kept low (10px reads nearly the same as 18px over
+   a near-black backdrop) and this utility is reserved for the few floating
+   surfaces that genuinely sit over moving content. */
 @utility glass {
   background: linear-gradient(
     145deg,
@@ -162,23 +167,23 @@
     rgb(255 255 255 / 0.025) 42%,
     rgb(0 0 0 / 0.22) 100%
   );
-  backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  backdrop-filter: blur(10px) saturate(125%);
+  -webkit-backdrop-filter: blur(10px) saturate(125%);
   border: 1px solid rgb(255 255 255 / 0.09);
   box-shadow:
     var(--shadow-inset-metal),
     0 12px 40px -12px rgb(0 0 0 / 0.9);
 }
 
+/* Heavy panels are already 86–94% opaque, so the backdrop behind them is
+   almost invisible — the blur was pure cost for no visual gain. Dropped. */
 @utility glass-heavy {
   background: linear-gradient(
     150deg,
-    rgb(28 33 38 / 0.86) 0%,
-    rgb(12 14 16 / 0.9) 55%,
-    rgb(4 5 6 / 0.94) 100%
+    rgb(28 33 38 / 0.94) 0%,
+    rgb(12 14 16 / 0.96) 55%,
+    rgb(4 5 6 / 0.98) 100%
   );
-  backdrop-filter: blur(26px) saturate(140%);
-  -webkit-backdrop-filter: blur(26px) saturate(140%);
   border: 1px solid rgb(255 255 255 / 0.08);
   box-shadow: var(--shadow-inset-metal), var(--shadow-depth);
 }
@@ -269,7 +274,12 @@
   );
   -webkit-background-clip: text;
   background-clip: text;
-  filter: drop-shadow(0 2px 0 rgb(0 0 0 / 0.7)) drop-shadow(0 12px 26px rgb(0 0 0 / 0.55));
+  /* One drop-shadow, not two. `filter` on background-clipped text forces the
+     glyphs to rasterise into an offscreen surface; each additional shadow
+     blurs that whole surface again. These headings are up to 13rem tall and
+     appear in every section, so the second pass was expensive and — under a
+     hard 2px offset — visually redundant. */
+  filter: drop-shadow(0 6px 18px rgb(0 0 0 / 0.65));
 }
 
 @utility text-outline {
@@ -291,11 +301,36 @@
   filter: blur(22px);
 }
 
+/* Promote to its own compositor layer.
+   Deliberately NO `will-change` here: this utility is applied to hundreds of
+   elements (every weapon card, operator card, smoke plume). A permanent
+   will-change forces the browser to hold a backing texture for each one, which
+   exhausts GPU memory and makes everything slower — the opposite of the intent.
+   translateZ(0) already gets the layer when it's actually needed. */
 @utility gpu {
   transform: translate3d(0, 0, 0);
-  will-change: transform;
   backface-visibility: hidden;
 }
+
+/* Opt-in will-change for the handful of elements genuinely animating right
+   now — apply it to a wrapper that exists only during an animation. */
+@utility gpu-active {
+  will-change: transform, opacity;
+}
+
+/* REMOVED: `defer-paint` (content-visibility: auto).
+   It was applied to the weapon, map, vehicle and operator cards to skip
+   painting them off screen. In practice it cost more than it saved here:
+     - `contain-intrinsic-size` needs a height *guess* per card, and every wrong
+       guess reserved blank space in the layout — visible as unexplained gaps.
+     - Skipping render until a card nears the viewport meant the browser had to
+       lay out and paint a whole diorama in one go on arrival, which read as the
+       cards being slow to load.
+     - Reserved-vs-real height changing mid-scroll shifted every section below,
+       which left ScrollTrigger measuring against a stale document.
+   The art it was protecting is now far lighter (low-LOD weapon drawings, no
+   SVG filters in the map scenes), so painting up front is simply cheaper than
+   deferring — and the layout is stable. */
 
 /* ============================================================================
    Keyframes
@@ -372,6 +407,17 @@
   }
   100% {
     transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Cheap stand-in for a volumetric plume: drifts a pair of static gradients
+   without any blur filter. Transform-only, so it stays on the compositor. */
+@keyframes smoke-drift {
+  from {
+    transform: translate3d(-3%, 2%, 0) scale(1.05);
+  }
+  to {
+    transform: translate3d(4%, -3%, 0) scale(1.18);
   }
 }
 

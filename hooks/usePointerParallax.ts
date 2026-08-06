@@ -97,8 +97,12 @@ export function useCardTilt<T extends HTMLElement>(
       if (!raf.current) raf.current = requestAnimationFrame(render);
     };
 
+    // Cached on enter rather than measured per move: calling
+    // getBoundingClientRect() inside pointermove forces a synchronous layout on
+    // every event, and this hook is attached to every weapon and operator card.
+    let rect = el.getBoundingClientRect();
+
     const onMove = (event: PointerEvent) => {
-      const rect = el.getBoundingClientRect();
       const px = (event.clientX - rect.left) / rect.width;
       const py = (event.clientY - rect.top) / rect.height;
       target.ry = (px - 0.5) * 2 * max;
@@ -109,6 +113,7 @@ export function useCardTilt<T extends HTMLElement>(
     };
 
     const onEnter = () => {
+      rect = el.getBoundingClientRect();
       active = true;
       target.s = scale;
       kick();

@@ -91,5 +91,49 @@ export function SmoothScroll({ children }: { children: ReactNode }) {
     }
   }, [ready, overlayOpen, reduced]);
 
+  /**
+   * Re-measure once the page has genuinely settled.
+   *
+   * Sections are code-split, so they hydrate at staggered times — a trigger
+   * created while the sections below it are still arriving measures against a
+   * document that is about to get taller. Combined with three pinned sections
+   * inserting spacer height, reveal animations could end up with start
+   * positions that the user had already scrolled past, so they never fired and
+   * their targets stayed at opacity 0 until something forced a recalculation.
+   *
+   * `load` covers late assets; the two timed passes cover dynamic chunks that
+   * hydrate after it. Refresh is idempotent and cheap when nothing has moved.
+   */
+  useEffect(() => {
+    if (reduced) return;
+
+    /**
+     * Re-measure, but never in the middle of an engaged pin.
+     *
+     * Refreshing repositions every pinned element, and doing that while one is
+     * actually pinned makes the stage visibly jump under the cursor. Checking
+     * for an active pin is more precise than the scroll-position heuristic this
+     * replaces: it allows the correction to happen anywhere on the page that is
+     * safe, rather than only near the top.
+     */
+    const refresh = () => {
+      const midPin = ScrollTrigger.getAll().some((t) => t.pin && t.isActive);
+      if (midPin) return;
+      ScrollTrigger.refresh();
+    };
+
+    if (document.readyState === 'complete') refresh();
+    else window.addEventListener('load', refresh, { once: true });
+
+    const settle = window.setTimeout(refresh, 600);
+    const late = window.setTimeout(refresh, 2000);
+
+    return () => {
+      window.removeEventListener('load', refresh);
+      clearTimeout(settle);
+      clearTimeout(late);
+    };
+  }, [reduced]);
+
   return <>{children}</>;
 }

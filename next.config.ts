@@ -14,10 +14,13 @@ const nextConfig: NextConfig = {
     // Next 15.5 on Windows intermittently fails page-data collection and build
     // tracing with PageNotFoundError (/_document) or a missing *.nft.json —
     // its worker pool races the filesystem while writing .next. Running the
-    // build single-threaded makes it deterministic. Costs a few seconds of
+    // build single-threaded makes it far more reliable. Costs a few seconds of
     // build time; changes nothing about the shipped output.
+    //
+    // NOTE: `webpackBuildWorker` was also set here, but this Next version
+    // rejects it as an unknown experiment (it prints `⨯ webpackBuildWorker`),
+    // so it was doing nothing. Removed.
     cpus: 1,
-    webpackBuildWorker: false,
   },
 };
 

@@ -1,10 +1,8 @@
 'use client';
 
 import { memo, useRef } from 'react';
-import { gsap } from '@/lib/gsap';
-import { useGsapContext } from '@/hooks/useGsapContext';
+import { useAmbientTimeline } from '@/hooks/useAmbientTimeline';
 import { useCardTilt } from '@/hooks/usePointerParallax';
-import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { WeaponArt } from '@/components/art/WeaponArt';
 import { TIER_META } from '@/lib/data/weapons';
 import type { Weapon } from '@/lib/types';
@@ -26,28 +24,30 @@ type Props = {
 function WeaponCardBase({ weapon, index, onSelect }: Props) {
   const cardRef = useRef<HTMLButtonElement>(null);
   const artRef = useRef<HTMLDivElement>(null);
-  const reduced = usePrefersReducedMotion();
   const tier = TIER_META[weapon.tier];
 
   useCardTilt(cardRef, { max: 10, scale: 1.02 });
 
-  useGsapContext(
-    () => {
-      if (reduced) return;
-
-      // Idle float — each card on its own phase so the grid never pulses in sync.
-      gsap.to(artRef.current, {
-        y: -12,
-        rotate: 0.9,
-        duration: 3.4 + (index % 5) * 0.42,
-        repeat: -1,
-        yoyo: true,
-        ease: 'sine.inOut',
-        delay: (index % 7) * 0.28,
-      });
-    },
+  // Idle float — each card on its own phase so the grid never pulses in sync.
+  // Paused while off screen: thirty infinite tweens writing transforms every
+  // frame is meaningful work for cards below the fold.
+  useAmbientTimeline(
     cardRef,
-    [index, reduced],
+    (tl) => {
+      tl.to(
+        artRef.current,
+        {
+          y: -12,
+          rotate: 0.9,
+          duration: 3.4 + (index % 5) * 0.42,
+          repeat: -1,
+          yoyo: true,
+          ease: 'sine.inOut',
+        },
+        (index % 7) * 0.28,
+      );
+    },
+    [index],
   );
 
   return (
@@ -62,7 +62,15 @@ function WeaponCardBase({ weapon, index, onSelect }: Props) {
       aria-label={`Inspect ${weapon.name}, ${tier.label}`}
       className={cn(
         'weapon-card group relative isolate block w-full overflow-hidden rounded-3xl text-left',
-        'carbon metal-edge gpu',
+        // No `metal-edge` here. That utility paints a conic gradient and then
+        // knocks its middle out with `mask-composite: xor` — two extra
+        // compositing passes per element. Fine for the handful of hero panels
+        // that use it, expensive across a 30-card grid. A hairline border plus
+        // an inset highlight gives the same brushed-edge read for one paint.
+        // No `defer-paint`: see Operators. Its reserved intrinsic height is a
+        // guess, and a wrong guess renders as blank space in the grid.
+        'carbon gpu border border-white/[0.07]',
+        'shadow-[inset_0_1px_0_rgb(255_255_255/0.07)]',
         'transition-shadow duration-500 ease-[cubic-bezier(.16,1,.3,1)]',
         'hover:shadow-[0_40px_90px_-30px_rgb(0_0_0/.95)]',
       )}
@@ -93,15 +101,9 @@ function WeaponCardBase({ weapon, index, onSelect }: Props) {
         }}
       />
 
-      {/* Scanline texture */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.35]"
-        style={{
-          backgroundImage:
-            'repeating-linear-gradient(0deg, rgb(0 0 0 / .28) 0 1px, transparent 1px 4px)',
-        }}
-      />
+      {/* The scanline overlay lived here as a fourth full-card layer. The
+          `carbon` background underneath already supplies a woven texture, so
+          it was one more thing to paint for very little. Removed. */}
 
       {/* ------------------------------ Header ------------------------------ */}
       <div className="relative z-10 flex items-start justify-between gap-3 p-6 pb-0">
@@ -132,26 +134,33 @@ function WeaponCardBase({ weapon, index, onSelect }: Props) {
           className="gpu relative"
           style={{ transform: 'translateZ(48px)' }}
         >
+          {/* Low detail + no sheen in the grid: shared gradients instead of
+              per-card defs, no SVG filter, no machining pattern, and none of
+              the sub-pixel decoration. The sheen would also add a
+              mix-blend-mode layer per card — 30 extra stacking contexts. */}
           <WeaponArt
             spec={weapon.silhouette}
             accent={tier.color}
+            sheen={false}
+            lod="low"
             className="h-auto w-full drop-shadow-[0_22px_36px_rgb(0_0_0/.8)]"
           />
         </div>
 
-        {/* Mirrored reflection on the "glass shelf" */}
+        {/* Mirrored reflection on the "glass shelf".
+            This used to render a second full <WeaponArt> — roughly 120 extra
+            SVG nodes per card, 30 cards, all parsed and laid out on load for a
+            barely-visible 25%-opacity smear. A gradient wash gives the same
+            grounded reflection read for two DOM nodes. */}
         <div
           aria-hidden
-          className="pointer-events-none -mt-10 h-24 overflow-hidden opacity-25 transition-opacity duration-500 group-hover:opacity-45"
+          className="pointer-events-none -mt-8 h-16 opacity-40 transition-opacity duration-500 group-hover:opacity-70"
           style={{
-            transform: 'scaleY(-1)',
-            maskImage: 'linear-gradient(to top, transparent 8%, black 92%)',
-            WebkitMaskImage: 'linear-gradient(to top, transparent 8%, black 92%)',
-            filter: 'blur(1.5px)',
+            background: `radial-gradient(60% 100% at 50% 0%, ${tier.glow}, transparent 72%)`,
+            maskImage: 'linear-gradient(to bottom, black, transparent)',
+            WebkitMaskImage: 'linear-gradient(to bottom, black, transparent)',
           }}
-        >
-          <WeaponArt spec={weapon.silhouette} accent={tier.color} className="h-auto w-full" sheen={false} />
-        </div>
+        />
       </div>
 
       {/* ------------------------------ Stats ------------------------------- */}

@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { gsap, Flip, ScrollTrigger } from '@/lib/gsap';
 import { useGsapContext } from '@/hooks/useGsapContext';
+import { useRevealOnce } from '@/hooks/useRevealOnce';
 import { useIsomorphicLayoutEffect } from '@/hooks/useIsomorphicLayoutEffect';
 import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { useExperience } from '@/components/providers/ExperienceProvider';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { ParticleField } from '@/components/ui/ParticleField';
+import { WeaponArtDefs } from '@/components/art/WeaponArt';
 import { WeaponCard } from '@/components/weapons/WeaponCard';
 import { WeaponDetail } from '@/components/weapons/WeaponDetail';
 import { WEAPON_CATEGORIES, WEAPONS } from '@/lib/data/weapons';
@@ -25,10 +27,55 @@ export function WeaponVault() {
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<{ weapon: Weapon; origin: HTMLElement } | null>(null);
 
+  /**
+   * How many cards are actually in the DOM.
+   *
+   * `content-visibility` stops the browser *painting* off-screen cards, but it
+   * still has to parse, style and lay out all thirty — and they ship in the
+   * server HTML. Starting with the first row-and-a-bit and mounting the rest
+   * once the browser is idle keeps the initial document small and gets the
+   * section interactive sooner. The remainder lands long before anyone has
+   * scrolled to it.
+   */
+  const [mountBudget, setMountBudget] = useState(8);
+
   const { setOverlayOpen, audioEnabled } = useExperience();
   const reduced = usePrefersReducedMotion();
 
-  const visible = filter === 'all' ? WEAPONS : WEAPONS.filter((w) => w.category === filter);
+  const matching = filter === 'all' ? WEAPONS : WEAPONS.filter((w) => w.category === filter);
+  const visible = matching.slice(0, mountBudget);
+
+  /**
+   * Mount the rest of the grid on the frame after first paint.
+   *
+   * This previously waited for `requestIdleCallback` (up to a 2.5s timeout).
+   * That kept first paint cheap, but twenty-two extra cards arriving seconds
+   * later added several thousand pixels to the document — so every section
+   * below the vault shifted down long after their ScrollTriggers had measured.
+   * Pins and reveals below were then positioned against a page that no longer
+   * existed, which is why resizing the window (DevTools opening counts) fixed
+   * everything: a resize forces a full re-measure.
+   *
+   * One frame is enough to stay off the critical path, and the document height
+   * settles immediately instead of seconds later.
+   */
+  useEffect(() => {
+    if (mountBudget >= WEAPONS.length) return;
+    const frame = requestAnimationFrame(() => setMountBudget(WEAPONS.length));
+    return () => cancelAnimationFrame(frame);
+  }, [mountBudget]);
+
+  /**
+   * Re-measure *after* React has committed the new rows.
+   *
+   * The old code called refresh inside a `requestAnimationFrame` fired straight
+   * after `setMountBudget`, which can run before React commits — so it measured
+   * the short grid and cached those wrong positions. A layout effect keyed to
+   * the budget runs after the DOM is updated, so the measurement is real.
+   */
+  useIsomorphicLayoutEffect(() => {
+    ScrollTrigger.refresh();
+  }, [mountBudget]);
 
   /* -------- Flip-animated filtering: cards glide to their new slots ------- */
   const changeFilter = useCallback(
@@ -70,31 +117,18 @@ export function WeaponVault() {
     });
   }, [filter]);
 
-  /* ------------------------- Scroll choreography ------------------------- */
+  /* ------------------------- Scroll choreography -------------------------
+   * Entrances run on IntersectionObserver rather than ScrollTrigger. A
+   * `gsap.from({ opacity: 0 })` whose trigger position is mis-measured never
+   * plays, leaving the whole grid invisible — and pinned sections above this
+   * one make mis-measurement easy. See useRevealOnce.
+   */
+  useRevealOnce(gridRef, '.weapon-card', { y: 70, duration: 0.75, stagger: 0.04 });
+  useRevealOnce(sectionRef, '.filter-chip', { y: 20, duration: 0.55, stagger: 0.03 });
+
   useGsapContext(
     () => {
       if (reduced) return;
-
-      // Cards rise in a wave as the grid enters.
-      gsap.from('.weapon-card', {
-        y: 90,
-        opacity: 0,
-        rotateX: 14,
-        duration: 1,
-        ease: 'cinema',
-        stagger: { amount: 0.7, grid: 'auto', from: 'start' },
-        scrollTrigger: { trigger: gridRef.current, start: 'top 82%', once: true },
-      });
-
-      // Category rail slides in from the left.
-      gsap.from('.filter-chip', {
-        x: -40,
-        opacity: 0,
-        duration: 0.7,
-        ease: 'cinema',
-        stagger: 0.035,
-        scrollTrigger: { trigger: '.filter-rail', start: 'top 88%', once: true },
-      });
 
       // Slow background parallax on the vault's ambient glow.
       gsap.to('.vault-glow', {
@@ -127,6 +161,8 @@ export function WeaponVault() {
       className="relative overflow-hidden bg-void py-28 sm:py-36"
       aria-label="Weapon vault"
     >
+      {/* Gradient definitions shared by every low-detail card in the grid. */}
+      <WeaponArtDefs />
       {/* Ambient */}
       <div
         aria-hidden

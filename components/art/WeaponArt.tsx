@@ -21,13 +21,90 @@ type Props = {
   className?: string;
   /** Adds the animated specular sweep. Disable for many-at-once grids. */
   sheen?: boolean;
+  /**
+   * Level of detail.
+   *
+   * `high` is the full drawing — per-instance gradients, a machining pattern,
+   * a blurred contact shadow, and every rail slot, witness hole and stipple
+   * dot. Correct for the one weapon on screen in the detail view.
+   *
+   * `low` is for the grid. It references shared gradients from
+   * <WeaponArtDefs /> instead of minting its own, drops the pattern and the
+   * SVG filter entirely, and skips decoration that is sub-pixel at card size.
+   * Thirty cards × (8 gradients + 1 pattern + 1 feGaussianBlur) was hundreds of
+   * definition nodes and thirty live filters for detail nobody can resolve.
+   */
+  lod?: 'high' | 'low';
 };
 
 const BORE = 74;
 
-function WeaponArtBase({ spec, accent = '#ff6a1a', className, sheen = true }: Props) {
+/**
+ * The gradients every low-detail weapon shares. Render this ONCE, high in the
+ * tree (the vault does it at section level); the ids are fixed so any number of
+ * `lod="low"` drawings can point at the same definitions.
+ */
+export const WeaponArtDefs = memo(function WeaponArtDefs() {
+  return (
+    <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
+      <defs>
+        <linearGradient id="wa-body" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#5a656d" />
+          <stop offset="14%" stopColor="#39424a" />
+          <stop offset="52%" stopColor="#20262b" />
+          <stop offset="86%" stopColor="#12161a" />
+          <stop offset="100%" stopColor="#080a0c" />
+        </linearGradient>
+        <linearGradient id="wa-poly" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2e3439" />
+          <stop offset="45%" stopColor="#191d21" />
+          <stop offset="100%" stopColor="#0a0c0e" />
+        </linearGradient>
+        <linearGradient id="wa-steel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#8e9aa3" />
+          <stop offset="22%" stopColor="#4d565e" />
+          <stop offset="60%" stopColor="#242a2f" />
+          <stop offset="100%" stopColor="#0d1012" />
+        </linearGradient>
+        <linearGradient id="wa-brass" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ffe0a3" />
+          <stop offset="40%" stopColor="#c69334" />
+          <stop offset="100%" stopColor="#6d4d12" />
+        </linearGradient>
+        <radialGradient id="wa-glass" cx="0.36" cy="0.3" r="0.85">
+          <stop offset="0%" stopColor="#bff0ff" stopOpacity="0.95" />
+          <stop offset="42%" stopColor="#2f7fa8" stopOpacity="0.7" />
+          <stop offset="100%" stopColor="#04080c" stopOpacity="0.95" />
+        </radialGradient>
+        {/* Soft contact shadow as a gradient — replaces a per-card
+            feGaussianBlur, which is a genuine offscreen render pass. */}
+        <radialGradient id="wa-shadow" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stopColor="#000" stopOpacity="0.6" />
+          <stop offset="60%" stopColor="#000" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="#000" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+    </svg>
+  );
+});
+
+function WeaponArtBase({
+  spec,
+  accent = '#ff6a1a',
+  className,
+  sheen = true,
+  lod = 'high',
+}: Props) {
   const uid = useId().replace(/[:]/g, '');
-  const id = (name: string) => `${name}-${uid}`;
+  const low = lod === 'low';
+  // Low detail points at the shared defs; high mints its own so the accent
+  // colour and machining pattern can vary per instance.
+  // The flag rides along on the id function so every drawing primitive can
+  // check it without threading an extra prop through a dozen signatures.
+  const id: IdFn = Object.assign(
+    (name: string) => (low ? `wa-${name}` : `${name}-${uid}`),
+    { low },
+  );
 
   const {
     kind,
@@ -48,6 +125,9 @@ function WeaponArtBase({ spec, accent = '#ff6a1a', className, sheen = true }: Pr
       aria-hidden="true"
       shapeRendering="geometricPrecision"
     >
+      {/* High detail only: low reuses <WeaponArtDefs />, so emitting these per
+          instance would be ~300 redundant nodes across a 30-card grid. */}
+      {low ? null : (
       <defs>
         {/* Primary gunmetal body — top-lit with a hard shadow underside. */}
         <linearGradient id={id('body')} x1="0" y1="0" x2="0" y2="1">
@@ -114,17 +194,22 @@ function WeaponArtBase({ spec, accent = '#ff6a1a', className, sheen = true }: Pr
           <rect x="0" y="0" width="460" height="170" />
         </clipPath>
       </defs>
+      )}
 
       {/* Contact shadow anchoring the weapon to its card. */}
-      <ellipse
-        cx="230"
-        cy="146"
-        rx="170"
-        ry="9"
-        fill="#000"
-        opacity="0.55"
-        filter={`url(#${id('soft')})`}
-      />
+      {low ? (
+        <ellipse cx="230" cy="146" rx="180" ry="14" fill="url(#wa-shadow)" />
+      ) : (
+        <ellipse
+          cx="230"
+          cy="146"
+          rx="170"
+          ry="9"
+          fill="#000"
+          opacity="0.55"
+          filter={`url(#${id('soft')})`}
+        />
+      )}
 
       <g>
         {kind === 'assault-rifle' && (
@@ -149,8 +234,12 @@ function WeaponArtBase({ spec, accent = '#ff6a1a', className, sheen = true }: Pr
         )}
       </g>
 
-      {/* Accent underglow — a warm rim light from below the weapon. */}
-      <rect x="60" y="132" width="340" height="2" fill={`url(#${id('accent')})`} opacity="0.6" />
+      {/* Accent underglow — a warm rim light from below the weapon.
+          Skipped at low detail: it needs a per-instance gradient (the whole
+          thing low detail exists to avoid) for a 2px bar. */}
+      {low ? null : (
+        <rect x="60" y="132" width="340" height="2" fill={`url(#${id('accent')})`} opacity="0.6" />
+      )}
 
       {sheen && (
         <g clipPath={`url(#${id('sheenClip')})`} style={{ mixBlendMode: 'overlay' }}>
@@ -169,7 +258,10 @@ function WeaponArtBase({ spec, accent = '#ff6a1a', className, sheen = true }: Pr
   );
 }
 
-type PartProps = { id: (n: string) => string };
+/** Id resolver, carrying the level-of-detail flag as a property. */
+type IdFn = ((name: string) => string) & { low: boolean };
+
+type PartProps = { id: IdFn };
 
 /* -------------------------------------------------------------------------- */
 /* Shared parts                                                               */
@@ -181,9 +273,24 @@ function Rail({ id, x, width, y = 50 }: PartProps & { x: number; width: number; 
   return (
     <g>
       <rect x={x} y={y} width={width} height={7} rx="1.5" fill={`url(#${id('steel')})`} />
-      {Array.from({ length: teeth }, (_, i) => (
-        <rect key={i} x={x + 3 + i * 9} y={y + 1} width={3} height={5} fill="#05070a" opacity="0.85" />
-      ))}
+      {/* Up to 17 slot rects per rail. At grid size each is well under a pixel,
+          so a single dashed stroke stands in for the whole row. */}
+      {id.low ? (
+        <line
+          x1={x + 3}
+          y1={y + 3.5}
+          x2={x + width - 3}
+          y2={y + 3.5}
+          stroke="#05070a"
+          strokeWidth="5"
+          strokeDasharray="3 6"
+          opacity="0.85"
+        />
+      ) : (
+        Array.from({ length: teeth }, (_, i) => (
+          <rect key={i} x={x + 3 + i * 9} y={y + 1} width={3} height={5} fill="#05070a" opacity="0.85" />
+        ))
+      )}
     </g>
   );
 }
@@ -197,14 +304,17 @@ function PistolGrip({ id, x = 152, angle = 14 }: PartProps & { x?: number; angle
         stroke="#04060a"
         strokeWidth="1"
       />
-      {/* Stippled texture panel */}
-      {Array.from({ length: 5 }, (_, r) => (
-        <g key={r} opacity="0.5">
-          {Array.from({ length: 4 }, (_, c) => (
-            <circle key={c} cx={x + 8 + c * 5} cy={100 + r * 7} r="0.9" fill="#5b666e" />
+      {/* Stippled texture panel — 20 sub-pixel circles per grip, dropped in the
+          grid where they resolve to a faint smudge anyway. */}
+      {id.low
+        ? null
+        : Array.from({ length: 5 }, (_, r) => (
+            <g key={r} opacity="0.5">
+              {Array.from({ length: 4 }, (_, c) => (
+                <circle key={c} cx={x + 8 + c * 5} cy={100 + r * 7} r="0.9" fill="#5b666e" />
+              ))}
+            </g>
           ))}
-        </g>
-      ))}
     </g>
   );
 }
@@ -229,7 +339,7 @@ function Muzzle({ id, x, suppressor }: PartProps & { x: number; suppressor?: boo
     return (
       <g>
         <rect x={x} y={BORE - 12} width="62" height="24" rx="11" fill={`url(#${id('steel')})`} />
-        <rect x={x} y={BORE - 12} width="62" height="24" rx="11" fill={`url(#${id('mill')})`} />
+        <rect x={x} y={BORE - 12} width="62" height="24" rx="11" fill={id.low ? 'none' : `url(#${id('mill')})`} />
         {Array.from({ length: 5 }, (_, i) => (
           <rect key={i} x={x + 10 + i * 10} y={BORE - 12} width="1.6" height="24" fill="#04060a" opacity="0.6" />
         ))}
@@ -308,17 +418,19 @@ function CurvedMag({ id, x, depth, curve = 14 }: PartProps & { x: number; depth:
         strokeWidth="1"
       />
       {/* Witness holes */}
-      {Array.from({ length: Math.max(1, Math.round(depth * 3)) }, (_, i) => (
-        <rect
-          key={i}
-          x={x + 12 + i * 2}
-          y={98 + i * (h / (depth * 3.4))}
-          width="7"
-          height="3"
-          rx="1.5"
-          fill="#05070a"
-        />
-      ))}
+      {id.low
+        ? null
+        : Array.from({ length: Math.max(1, Math.round(depth * 3)) }, (_, i) => (
+            <rect
+              key={i}
+              x={x + 12 + i * 2}
+              y={98 + i * (h / (depth * 3.4))}
+              width="7"
+              height="3"
+              rx="1.5"
+              fill="#05070a"
+            />
+          ))}
       <path d={`M${x + 2} 90 L${x + 32} 90`} stroke="#fff" strokeOpacity="0.12" strokeWidth="2" />
     </g>
   );
@@ -357,7 +469,7 @@ function Optic({
       <rect x="104" y="10" width="12" height="30" rx="3" fill={`url(#${id('body')})`} />
       {/* Main tube */}
       <rect x="18" y="14" width="112" height="22" rx="11" fill={`url(#${id('steel')})`} />
-      <rect x="18" y="14" width="112" height="22" rx="11" fill={`url(#${id('mill')})`} />
+      <rect x="18" y="14" width="112" height="22" rx="11" fill={id.low ? 'none' : `url(#${id('mill')})`} />
       <rect x="18" y="16" width="112" height="4" rx="2" fill="#fff" opacity="0.12" />
       {/* Ocular bell */}
       <rect x="2" y="9" width="20" height="32" rx="7" fill={`url(#${id('body')})`} />
@@ -411,11 +523,13 @@ function Rifle({
 
       {/* Handguard */}
       <rect x="240" y={BORE - 16} width={handguardEnd - 240} height="32" rx="5" fill={`url(#${id('body')})`} />
-      <rect x="240" y={BORE - 16} width={handguardEnd - 240} height="32" rx="5" fill={`url(#${id('mill')})`} />
+      <rect x="240" y={BORE - 16} width={handguardEnd - 240} height="32" rx="5" fill={id.low ? 'none' : `url(#${id('mill')})`} />
       {/* M-LOK slots */}
-      {Array.from({ length: Math.floor((handguardEnd - 250) / 20) }, (_, i) => (
-        <rect key={i} x={252 + i * 20} y={BORE + 2} width="12" height="5" rx="2.5" fill="#04060a" opacity="0.85" />
-      ))}
+      {id.low
+        ? null
+        : Array.from({ length: Math.floor((handguardEnd - 250) / 20) }, (_, i) => (
+            <rect key={i} x={252 + i * 20} y={BORE + 2} width="12" height="5" rx="2.5" fill="#04060a" opacity="0.85" />
+          ))}
       <rect x="240" y={BORE - 16} width={handguardEnd - 240} height="4" rx="2" fill="#fff" opacity="0.09" />
 
       {/* Upper receiver */}
@@ -533,7 +647,7 @@ function Smg({
       {/* Compact boxy receiver */}
       <path d="M120 48 L254 48 L254 96 L120 96 Z" fill={`url(#${id('body')})`} stroke="#04060a" strokeWidth="1" />
       <rect x="120" y="48" width="134" height="5" fill="#fff" opacity="0.1" />
-      <rect x="120" y="48" width="134" height="48" fill={`url(#${id('mill')})`} />
+      <rect x="120" y="48" width="134" height="48" fill={id.low ? 'none' : `url(#${id('mill')})`} />
 
       {/* Cooling slots */}
       {Array.from({ length: 5 }, (_, i) => (
@@ -631,7 +745,7 @@ function Pistol({ id, barrel, mag, drum }: PartProps & { barrel: number; mag: nu
 
         {/* Cylinder */}
         <circle cx="238" cy={BORE - 2} r="28" fill={`url(#${id('body')})`} stroke="#04060a" strokeWidth="1.5" />
-        <circle cx="238" cy={BORE - 2} r="28" fill={`url(#${id('mill')})`} />
+        <circle cx="238" cy={BORE - 2} r="28" fill={id.low ? 'none' : `url(#${id('mill')})`} />
         {Array.from({ length: 6 }, (_, i) => {
           const a = (i / 6) * Math.PI * 2;
           return (
@@ -711,7 +825,7 @@ function Lmg({ id, barrel, drum, grip }: PartProps & { barrel: number; drum?: bo
       {/* Receiver */}
       <path d="M112 46 L258 46 L258 98 L112 98 Z" fill={`url(#${id('body')})`} stroke="#04060a" strokeWidth="1" />
       <rect x="112" y="46" width="146" height="5" fill="#fff" opacity="0.1" />
-      <rect x="112" y="46" width="146" height="52" fill={`url(#${id('mill')})`} />
+      <rect x="112" y="46" width="146" height="52" fill={id.low ? 'none' : `url(#${id('mill')})`} />
       {/* Feed tray cover hinge */}
       <rect x="150" y="52" width="90" height="6" rx="3" fill="#0d1114" />
 
@@ -761,7 +875,7 @@ function Launcher({ id, barrel, stock }: PartProps & { barrel: number; stock?: S
         <path d="M22 50 L74 62 L74 88 L22 100 Z" fill={`url(#${id('body')})`} stroke="#04060a" />
         {/* Tube */}
         <rect x="70" y={BORE - 13} width={210} height="26" rx="8" fill={`url(#${id('body')})`} />
-        <rect x="70" y={BORE - 13} width={210} height="26" rx="8" fill={`url(#${id('mill')})`} />
+        <rect x="70" y={BORE - 13} width={210} height="26" rx="8" fill={id.low ? 'none' : `url(#${id('mill')})`} />
         <rect x="70" y={BORE - 13} width={210} height="5" rx="2" fill="#fff" opacity="0.09" />
         {/* Wooden heat guard */}
         <rect x="118" y={BORE - 17} width="86" height="34" rx="6" fill="#3a2415" />
@@ -802,7 +916,7 @@ function Launcher({ id, barrel, stock }: PartProps & { barrel: number; stock?: S
       <Stock id={id} type={stock === 'none' ? 'fixed' : stock} />
       {/* Fat 40mm tube */}
       <rect x="200" y={BORE - 20} width={muzzle - 200} height="40" rx="18" fill={`url(#${id('body')})`} />
-      <rect x="200" y={BORE - 20} width={muzzle - 200} height="40" rx="18" fill={`url(#${id('mill')})`} />
+      <rect x="200" y={BORE - 20} width={muzzle - 200} height="40" rx="18" fill={id.low ? 'none' : `url(#${id('mill')})`} />
       <rect x="204" y={BORE - 18} width={muzzle - 210} height="6" rx="3" fill="#fff" opacity="0.09" />
       <circle cx={muzzle - 6} cy={BORE} r="15" fill="#05070a" />
       <circle cx={muzzle - 6} cy={BORE} r="9" fill="#12161a" />
@@ -831,7 +945,7 @@ function Throwable({ id, variant }: PartProps & { variant: number }) {
       <g transform="translate(230 78)">
         {/* Body */}
         <ellipse cx="0" cy="0" rx="46" ry="52" fill={`url(#${id('body')})`} stroke="#04060a" strokeWidth="1.5" />
-        <ellipse cx="0" cy="0" rx="46" ry="52" fill={`url(#${id('mill')})`} />
+        <ellipse cx="0" cy="0" rx="46" ry="52" fill={id.low ? 'none' : `url(#${id('mill')})`} />
         {/* Fragmentation grid */}
         {Array.from({ length: 7 }, (_, i) => (
           <path
@@ -869,7 +983,7 @@ function Throwable({ id, variant }: PartProps & { variant: number }) {
   return (
     <g transform="translate(230 76)">
       <rect x="-30" y="-54" width="60" height="104" rx="10" fill={bodyFill} stroke="#04060a" strokeWidth="1.5" />
-      <rect x="-30" y="-54" width="60" height="104" rx="10" fill={`url(#${id('mill')})`} />
+      <rect x="-30" y="-54" width="60" height="104" rx="10" fill={id.low ? 'none' : `url(#${id('mill')})`} />
       <rect x="-26" y="-50" width="14" height="96" rx="7" fill="#fff" opacity="0.07" />
       {/* Identification band */}
       <rect x="-30" y="-14" width="60" height="12" fill={bandColor} opacity="0.85" />

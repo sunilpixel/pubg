@@ -2,12 +2,12 @@
 
 import { useCallback, useRef } from 'react';
 import { gsap } from '@/lib/gsap';
-import { useGsapContext } from '@/hooks/useGsapContext';
+import { useAmbientTimeline } from '@/hooks/useAmbientTimeline';
+import { useRevealOnce } from '@/hooks/useRevealOnce';
 import { useCardTilt } from '@/hooks/usePointerParallax';
 import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { ScrambleText } from '@/components/ui/ScrambleText';
-import { VolumetricSmoke } from '@/components/ui/VolumetricSmoke';
 import { OperatorPortrait } from '@/components/art/OperatorPortrait';
 import { OPERATORS } from '@/lib/data/world';
 import { TIER_META } from '@/lib/data/weapons';
@@ -24,23 +24,9 @@ export function Operators() {
   const sectionRef = useRef<HTMLElement>(null);
   const reduced = usePrefersReducedMotion();
 
-  useGsapContext(
-    () => {
-      if (reduced) return;
-
-      gsap.from('.operator-card', {
-        y: 100,
-        opacity: 0,
-        rotateY: 10,
-        duration: 1.05,
-        ease: 'cinema',
-        stagger: 0.08,
-        scrollTrigger: { trigger: '.operator-grid', start: 'top 84%', once: true },
-      });
-    },
-    sectionRef,
-    [reduced],
-  );
+  // IntersectionObserver-driven so the cards can never be left at opacity 0 by
+  // a mis-measured ScrollTrigger. See useRevealOnce.
+  useRevealOnce(sectionRef, '.operator-card', { y: 70, duration: 0.8, stagger: 0.06 });
 
   return (
     <section
@@ -81,31 +67,27 @@ function OperatorCard({ operator, index }: { operator: Operator; index: number }
 
   useCardTilt(cardRef, { max: 13, scale: 1.025 });
 
-  /* Slow idle: the portrait breathes and the eyes pulse */
-  useGsapContext(
-    () => {
-      if (reduced) return;
-
-      gsap.to('.portrait-layer', {
-        y: -8,
-        duration: 3.8 + (index % 4) * 0.5,
-        repeat: -1,
-        yoyo: true,
-        ease: 'sine.inOut',
-        delay: index * 0.3,
-      });
-
-      gsap.to('.eye-glow', {
-        opacity: 0.9,
-        duration: 2.2,
-        repeat: -1,
-        yoyo: true,
-        ease: 'sine.inOut',
-        delay: index * 0.45,
-      });
-    },
+  /* Slow idle: the portrait breathes and the eyes pulse. Paused off screen. */
+  useAmbientTimeline(
     cardRef,
-    [reduced, index],
+    (tl) => {
+      tl.to(
+        '.portrait-layer',
+        {
+          y: -8,
+          duration: 3.8 + (index % 4) * 0.5,
+          repeat: -1,
+          yoyo: true,
+          ease: 'sine.inOut',
+        },
+        index * 0.3,
+      ).to(
+        '.eye-glow',
+        { opacity: 0.9, duration: 2.2, repeat: -1, yoyo: true, ease: 'sine.inOut' },
+        index * 0.45,
+      );
+    },
+    [index],
   );
 
   const onEnter = useCallback(() => {
@@ -135,8 +117,14 @@ function OperatorCard({ operator, index }: { operator: Operator; index: number }
       data-scramble-host
       data-cursor="view"
       data-cursor-label="Dossier"
+      // `defer-paint` removed. `content-visibility: auto` leaves off-screen
+      // cards unrendered and reserves `contain-intrinsic-size` instead — here a
+      // guessed 820px per card, so two rows reserved 1640px of blank space
+      // before anything painted. That guess sat directly below the supply drop,
+      // which is exactly where the empty gap appeared. A wrong height estimate
+      // is worse than painting the cards, especially now the art is far lighter.
       className="operator-card group relative isolate overflow-hidden rounded-3xl bg-carbon gpu shadow-[0_30px_70px_-30px_rgb(0_0_0/.95)]"
-      style={{ transformStyle: 'preserve-3d' }}
+      style={{ transformStyle: 'preserve-3d' } as React.CSSProperties}
     >
       {/* Rotating conic border */}
       <span aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl">
@@ -156,10 +144,21 @@ function OperatorCard({ operator, index }: { operator: Operator; index: number }
         className="pointer-events-none absolute inset-0 rounded-3xl border border-white/8"
       />
 
-      {/* Background smoke bed */}
-      <div className="card-smoke pointer-events-none absolute inset-0 opacity-35 transition-opacity duration-700">
-        <VolumetricSmoke plumes={3} tone="cold" intensity={0.6} seed={operator.hue} />
-      </div>
+      {/* Background smoke bed.
+          This was a <VolumetricSmoke> per card — six instances, each rendering
+          three 50vw divs under a 60px blur. Blur cost scales with area, so six
+          cards were repainting a very large blurred surface continuously. A
+          pair of static radial gradients under a slow CSS drift reads the same
+          at this size for a tiny fraction of the cost. */}
+      <div
+        aria-hidden
+        className="card-smoke pointer-events-none absolute inset-0 opacity-35 transition-opacity duration-700"
+        style={{
+          background: `radial-gradient(60% 45% at 28% 22%, hsl(${operator.hue} 40% 62% / .16), transparent 70%),
+                       radial-gradient(55% 50% at 76% 68%, hsl(${operator.hue} 30% 48% / .14), transparent 72%)`,
+          animation: 'smoke-drift 14s ease-in-out infinite alternate',
+        }}
+      />
 
       {/* Hue wash */}
       <span

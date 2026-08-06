@@ -54,40 +54,44 @@ export function VolumetricSmoke({
 
   useGsapContext(
     () => {
-      if (reduced) return;
+      if (reduced || !ref.current) return;
+
+      // One timeline per instance rather than three tweens per plume: it can be
+      // paused wholesale when the section scrolls out of view. Blurred layers
+      // this large are expensive to repaint, so not animating them off-screen
+      // is most of the win here.
+      const timeline = gsap.timeline({ paused: true });
 
       gsap.utils.toArray<HTMLElement>('.smoke-plume').forEach((plume, i) => {
         const r = (n: number) => seeded(seed * 31 + i * 17 + n);
 
-        gsap.to(plume, {
-          xPercent: -30 + r(1) * 60,
-          yPercent: -26 + r(2) * 34,
-          duration: 18 + r(3) * 16,
-          repeat: -1,
-          yoyo: true,
-          ease: 'sine.inOut',
-          delay: -r(4) * 20,
-        });
-
-        gsap.to(plume, {
-          scale: 1.15 + r(5) * 0.6,
-          rotate: -22 + r(6) * 44,
-          duration: 24 + r(7) * 18,
-          repeat: -1,
-          yoyo: true,
-          ease: 'sine.inOut',
-          delay: -r(8) * 22,
-        });
-
-        gsap.to(plume, {
-          opacity: 0.18 + r(9) * 0.4,
-          duration: 9 + r(10) * 9,
-          repeat: -1,
-          yoyo: true,
-          ease: 'sine.inOut',
-          delay: -r(11) * 10,
-        });
+        timeline.to(
+          plume,
+          {
+            xPercent: -30 + r(1) * 60,
+            yPercent: -26 + r(2) * 34,
+            scale: 1.15 + r(5) * 0.6,
+            rotate: -22 + r(6) * 44,
+            opacity: 0.18 + r(9) * 0.4,
+            duration: 18 + r(3) * 16,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+          },
+          -r(4) * 20,
+        );
       });
+
+      const observer = new IntersectionObserver(
+        ([entry]) => (entry.isIntersecting ? timeline.play() : timeline.pause()),
+        { rootMargin: '100px' },
+      );
+      observer.observe(ref.current);
+
+      return () => {
+        observer.disconnect();
+        timeline.kill();
+      };
     },
     ref,
     [reduced, plumes, seed, mounted],
@@ -104,7 +108,9 @@ export function VolumetricSmoke({
     >
       {Array.from({ length: plumes }, (_, i) => {
         const r = (n: number) => seeded(seed * 13 + i * 29 + n);
-        const size = 40 + r(1) * 55;
+        // Blur is the cost driver and it scales with the blurred area, so both
+        // the plume size and the radius are kept well below the originals.
+        const size = 34 + r(1) * 34;
         return (
           <div
             key={i}
@@ -115,7 +121,7 @@ export function VolumetricSmoke({
               width: `${size}vw`,
               height: `${size * (0.6 + r(4) * 0.6)}vw`,
               opacity: 0.2 + r(5) * 0.3,
-              filter: `blur(${34 + r(6) * 46}px)`,
+              filter: `blur(${26 + r(6) * 20}px)`,
               background: `radial-gradient(closest-side, ${bright.replace(
                 '/ 1)',
                 `/ ${(0.13 + r(7) * 0.16).toFixed(3)})`,

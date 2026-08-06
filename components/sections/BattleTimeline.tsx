@@ -54,6 +54,8 @@ export function BattleTimeline() {
           scrub: 0.8,
           anticipatePin: 1,
           invalidateOnRefresh: true,
+          // Last pin on the page, so it refreshes after the two above it.
+          refreshPriority: 1,
           onUpdate: (self) => {
             // Draw the trail in behind the aircraft marker.
             if (progressRef.current) {

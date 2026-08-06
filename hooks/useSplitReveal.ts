@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, type RefObject } from 'react';
-import { gsap, SplitText, ScrollTrigger } from '@/lib/gsap';
+import { gsap, SplitText } from '@/lib/gsap';
 import { useIsomorphicLayoutEffect } from './useIsomorphicLayoutEffect';
 import { usePrefersReducedMotion } from './useMediaQuery';
 
@@ -75,6 +75,20 @@ export function useSplitReveal<T extends HTMLElement>(
       const targets = split[type] as Element[];
       gsap.set(el, { opacity: 1, perspective: 900 });
 
+      /**
+       * Playback is driven by IntersectionObserver, not ScrollTrigger.
+       *
+       * A ScrollTrigger here has to compute a scroll position, and this page
+       * makes that unreliable: three pinned sections inject spacer height and
+       * every section is code-split, so a trigger created before the pins above
+       * it have applied their spacing lands in the wrong place and never fires.
+       * The heading then stays at opacity 0 permanently — which reads as a tall
+       * blank gap where a section masthead should be.
+       *
+       * The observer reports real visibility from layout, so pin spacing simply
+       * cannot desynchronise it. The card reveals moved for the same reason;
+       * this was the last one still measuring scroll positions.
+       */
       const tween = gsap.from(targets, {
         yPercent: y,
         rotateX,
@@ -85,25 +99,39 @@ export function useSplitReveal<T extends HTMLElement>(
         stagger,
         transformOrigin: '50% 100% -60px',
         force3D: true,
-        ...(scroll
-          ? {
-              scrollTrigger: {
-                trigger: el,
-                start,
-                once: true,
-              },
-            }
-          : {}),
+        paused: scroll,
       });
 
+      let observer: IntersectionObserver | null = null;
+
+      if (scroll) {
+        observer = new IntersectionObserver(
+          ([entry]) => {
+            // Visible, or already scrolled past — either way, show it.
+            if (entry.isIntersecting || entry.boundingClientRect.bottom < 0) {
+              tween.play();
+              observer?.disconnect();
+            }
+          },
+          { rootMargin: '0px 0px -12% 0px', threshold: 0 },
+        );
+        observer.observe(el);
+      }
+
+      // Last-resort backstop: a decorative reveal must never be able to leave
+      // content permanently hidden.
+      const backstop = window.setTimeout(() => {
+        if (!tween.progress()) tween.progress(1);
+        observer?.disconnect();
+      }, 4000);
+
       return () => {
+        clearTimeout(backstop);
+        observer?.disconnect();
         tween.kill();
         split.revert();
       };
     }, el);
-
-    // Splits change line boxes; make sure pinned sections re-measure.
-    ScrollTrigger.refresh();
 
     return () => ctx.revert();
   }, [ref, type, stagger, duration, delay, y, rotateX, scroll, start, ease, enabled]);

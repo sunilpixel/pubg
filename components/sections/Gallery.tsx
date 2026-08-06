@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { gsap, Flip } from '@/lib/gsap';
-import { useGsapContext } from '@/hooks/useGsapContext';
+import { useRevealOnce } from '@/hooks/useRevealOnce';
 import { useIsomorphicLayoutEffect } from '@/hooks/useIsomorphicLayoutEffect';
 import { usePrefersReducedMotion, useHasFinePointer } from '@/hooks/useMediaQuery';
 import { useExperience } from '@/components/providers/ExperienceProvider';
@@ -33,23 +33,9 @@ export function Gallery() {
   const { setOverlayOpen } = useExperience();
   const reduced = usePrefersReducedMotion();
 
-  useGsapContext(
-    () => {
-      if (reduced) return;
-
-      gsap.from('.shot-tile', {
-        y: 80,
-        opacity: 0,
-        scale: 0.95,
-        duration: 1,
-        ease: 'cinema',
-        stagger: { amount: 0.6, from: 'start' },
-        scrollTrigger: { trigger: '.shot-grid', start: 'top 84%', once: true },
-      });
-    },
-    sectionRef,
-    [reduced],
-  );
+  // IntersectionObserver-driven so the tiles can never be left at opacity 0 by
+  // a mis-measured ScrollTrigger. See useRevealOnce.
+  useRevealOnce(sectionRef, '.shot-tile', { y: 60, duration: 0.75, stagger: 0.05 });
 
   /* -------- Flip the tile between its grid slot and fullscreen -------- */
   const toggle = useCallback(
@@ -199,24 +185,30 @@ function ShotTile({
         <ShotArt shot={shot} className="h-full w-full object-cover" />
       </div>
 
-      {/* Blur + desaturation falloff at the edges, lifted on hover */}
+      {/* Edge falloff, lifted on hover.
+          Was a per-tile `backdrop-blur` — eight of them, each forcing the
+          compositor to re-blur whatever sits behind the tile. A darkening
+          vignette gives the same "focus pulls to centre" read for free. */}
       <span
         aria-hidden
         className={cn(
-          'pointer-events-none absolute inset-0 backdrop-blur-[3px] transition-opacity duration-600',
+          'pointer-events-none absolute inset-0 transition-opacity duration-600',
           expanded ? 'opacity-0' : 'opacity-100 group-hover:opacity-0',
         )}
         style={{
-          maskImage: 'radial-gradient(120% 100% at 50% 50%, transparent 32%, black 100%)',
-          WebkitMaskImage: 'radial-gradient(120% 100% at 50% 50%, transparent 32%, black 100%)',
+          background:
+            'radial-gradient(120% 100% at 50% 50%, transparent 30%, rgb(3 4 5 / .55) 100%)',
         }}
       />
 
-      {/* Noise gain on hover */}
+      {/* Noise gain on hover — tiled texture, not a live SVG filter. */}
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 mix-blend-overlay transition-opacity duration-500 group-hover:opacity-40"
-        style={{ filter: 'url(#bp-grain)' }}
+        className="pointer-events-none absolute inset-0 opacity-0 mix-blend-overlay transition-opacity duration-500 group-hover:opacity-30"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E\")",
+        }}
       />
 
       {/* Scrim */}

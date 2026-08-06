@@ -52,25 +52,44 @@ export function Marquee({
       });
 
       // Scroll velocity retimes the loop and skews the type slightly.
+      //
+      // The previous version created a brand-new gsap.to() inside onUpdate,
+      // i.e. a tween allocation on every single scroll event — hundreds per
+      // second during a fast scroll, each one immediately overwriting the last.
+      // Now the skew is eased toward a target on GSAP's existing ticker with
+      // no allocation at all.
       const skewSetter = gsap.quickSetter(strips, 'skewX', 'deg');
+      let targetSkew = 0;
+      let currentSkew = 0;
+
+      const easeSkew = () => {
+        // The target decays on its own, so when scrolling stops the skew
+        // settles back to zero without needing a timer per scroll event.
+        targetSkew *= 0.9;
+
+        const next = currentSkew + (targetSkew - currentSkew) * 0.12;
+        if (Math.abs(next - currentSkew) < 0.01) {
+          if (currentSkew !== 0 && Math.abs(currentSkew) < 0.02) {
+            currentSkew = 0;
+            skewSetter(0);
+          }
+          return;
+        }
+        currentSkew = next;
+        skewSetter(currentSkew);
+      };
+      gsap.ticker.add(easeSkew);
+
       const st = ScrollTrigger.create({
         onUpdate: (self) => {
-          const velocity = self.getVelocity();
-          const scaled = gsap.utils.clamp(-4, 4, velocity / 380);
+          const scaled = gsap.utils.clamp(-4, 4, self.getVelocity() / 380);
           tween.timeScale(gsap.utils.clamp(0.35, 5, 1 + Math.abs(scaled)));
-          gsap.to(
-            { v: 0 },
-            {
-              duration: 0.4,
-              onUpdate: () => skewSetter(gsap.utils.clamp(-7, 7, -scaled * 1.5)),
-              onComplete: () => skewSetter(0),
-              overwrite: true,
-            },
-          );
+          targetSkew = gsap.utils.clamp(-7, 7, -scaled * 1.5);
         },
       });
 
       return () => {
+        gsap.ticker.remove(easeSkew);
         tween.kill();
         st.kill();
       };

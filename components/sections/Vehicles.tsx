@@ -2,7 +2,7 @@
 
 import { useCallback, useRef } from 'react';
 import { gsap } from '@/lib/gsap';
-import { useGsapContext } from '@/hooks/useGsapContext';
+import { useRevealOnce } from '@/hooks/useRevealOnce';
 import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { useExperience } from '@/components/providers/ExperienceProvider';
 import { SectionHeading } from '@/components/ui/SectionHeading';
@@ -23,22 +23,9 @@ export function Vehicles() {
   const sectionRef = useRef<HTMLElement>(null);
   const reduced = usePrefersReducedMotion();
 
-  useGsapContext(
-    () => {
-      if (reduced) return;
-
-      gsap.from('.vehicle-card', {
-        y: 80,
-        opacity: 0,
-        duration: 1,
-        ease: 'cinema',
-        stagger: 0.08,
-        scrollTrigger: { trigger: '.vehicle-grid', start: 'top 84%', once: true },
-      });
-    },
-    sectionRef,
-    [reduced],
-  );
+  // IntersectionObserver-driven so the cards can never be left at opacity 0 by
+  // a mis-measured ScrollTrigger. See useRevealOnce.
+  useRevealOnce(sectionRef, '.vehicle-card', { y: 60, duration: 0.75, stagger: 0.06 });
 
   return (
     <section
@@ -221,8 +208,10 @@ function VehicleCard({ vehicle, index }: { vehicle: Vehicle; index: number }) {
       tabIndex={0}
       data-cursor="view"
       data-cursor-label="Ignite"
+      // No `defer-paint`: its reserved `contain-intrinsic-size` is a guess, and
+      // a wrong guess shows up as blank space in the layout. See Operators.
       className="vehicle-card group relative isolate overflow-hidden rounded-3xl carbon metal-edge gpu shadow-[0_30px_70px_-30px_rgb(0_0_0/.95)] transition-shadow duration-500 hover:shadow-[0_50px_100px_-30px_rgb(0_0_0/1)]"
-      style={{ ['--accent' as string]: vehicle.accent }}
+      style={{ '--accent': vehicle.accent } as React.CSSProperties}
     >
       {/* Accent wash */}
       <span

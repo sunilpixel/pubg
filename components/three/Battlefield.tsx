@@ -1,11 +1,16 @@
-'use client';
+"use client";
 
-import { useMemo, useRef, type RefObject } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { AdaptiveDpr, PerformanceMonitor, Preload, Sparkles } from '@react-three/drei';
-import * as THREE from 'three';
-import { fbm, ridged } from '@/lib/noise';
-import { getPointer } from '@/lib/pointer';
+import { useMemo, useRef, type RefObject } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import {
+  AdaptiveDpr,
+  PerformanceMonitor,
+  Preload,
+  Sparkles,
+} from "@react-three/drei";
+import * as THREE from "three";
+import { fbm, ridged } from "@/lib/noise";
+import { getPointer } from "@/lib/pointer";
 
 /**
  * The hero battlefield.
@@ -21,7 +26,9 @@ import { getPointer } from '@/lib/pointer';
 type Props = {
   /** 0 → 1 scroll progress through the pinned hero, written by GSAP. */
   progress: RefObject<number>;
-  quality?: 'high' | 'low';
+  quality?: "high" | "low";
+  /** Render loop runs only while the hero is on screen. */
+  active?: boolean;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -30,14 +37,17 @@ type Props = {
 
 function Terrain() {
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(900, 900, 150, 150);
+    // 96² segments ≈ 18k verts vs 150² ≈ 45k. The displacement is low-frequency
+    // and the scene sits under heavy fog, so the extra density was invisible
+    // while costing a much longer build loop on load (the fBm runs per vertex).
+    const geo = new THREE.PlaneGeometry(900, 900, 96, 96);
     const position = geo.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(position.count * 3);
 
-    const scorched = new THREE.Color('#1a1512');
-    const dirt = new THREE.Color('#2e2a22');
-    const grass = new THREE.Color('#2b3526');
-    const rock = new THREE.Color('#3b3f42');
+    const scorched = new THREE.Color("#1a1512");
+    const dirt = new THREE.Color("#2e2a22");
+    const grass = new THREE.Color("#2b3526");
+    const rock = new THREE.Color("#3b3f42");
 
     for (let i = 0; i < position.count; i++) {
       const x = position.getX(i);
@@ -46,9 +56,12 @@ function Terrain() {
       // Broad landform + fine detail. The rim rises so the horizon reads as
       // a valley rather than an infinite plane.
       const rim = Math.max(0, (Math.hypot(x, y) - 210) / 300);
+      // Octave counts kept low: this loop runs once per vertex at mount, and
+      // every octave is another handful of sin() calls. Five octaves over 9k
+      // vertices was a visible hitch on the frame the hero appeared.
       const h =
-        fbm(x * 0.0055, y * 0.0055, 5) * 22 +
-        fbm(x * 0.021, y * 0.021, 3) * 4.2 +
+        fbm(x * 0.0055, y * 0.0055, 4) * 22 +
+        fbm(x * 0.021, y * 0.021, 2) * 4.2 +
         rim * rim * 70;
 
       position.setZ(i, h);
@@ -59,7 +72,11 @@ function Terrain() {
       colour.lerp(dirt, THREE.MathUtils.clamp(slope * 1.6, 0, 1));
       colour.lerp(rock, THREE.MathUtils.clamp((h - 16) / 44, 0, 1));
       // Burn scars near the centre of the valley.
-      const burn = THREE.MathUtils.clamp(1 - Math.hypot(x + 40, y - 30) / 150, 0, 1);
+      const burn = THREE.MathUtils.clamp(
+        1 - Math.hypot(x + 40, y - 30) / 150,
+        0,
+        1,
+      );
       colour.lerp(scorched, burn * 0.75);
 
       colors[i * 3] = colour.r;
@@ -67,20 +84,38 @@ function Terrain() {
       colors[i * 3 + 2] = colour.b;
     }
 
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
     return geo;
   }, []);
 
   return (
-    <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, -26, 0]} receiveShadow>
-      <meshStandardMaterial vertexColors roughness={0.96} metalness={0.02} dithering />
+    <mesh
+      geometry={geometry}
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, -26, 0]}
+    >
+      {/* Lambert, not Standard. The terrain covers most of the screen, so its
+          fragment shader runs for a large share of every frame — and a PBR
+          material evaluates a full BRDF per light. This surface is matte dirt
+          at roughness 0.96 with no metalness and no environment map, so the
+          PBR path was computing specular that resolves to nearly nothing.
+          Lambert gives the same matte result far more cheaply. */}
+      <meshLambertMaterial vertexColors dithering />
     </mesh>
   );
 }
 
 /** Distant ridgeline — a flat ridged-noise silhouette, nearly black. */
-function Ridgeline({ distance, height, tint }: { distance: number; height: number; tint: string }) {
+function Ridgeline({
+  distance,
+  height,
+  tint,
+}: {
+  distance: number;
+  height: number;
+  tint: string;
+}) {
   const geometry = useMemo(() => {
     const segments = 220;
     const width = 2400;
@@ -102,7 +137,11 @@ function Ridgeline({ distance, height, tint }: { distance: number; height: numbe
 
   return (
     <mesh geometry={geometry} position={[0, -34, -distance]}>
-      <meshBasicMaterial color={tint} fog={false} transparent opacity={0.96} />
+      {/* Opaque, not `transparent opacity={0.96}`. These are screen-filling
+          quads; marking them transparent moved three of them into the blended
+          render queue, so the GPU alpha-blended the full viewport three times
+          over to apply 4% transparency nobody can see. */}
+      <meshBasicMaterial color={tint} fog={false} />
     </mesh>
   );
 }
@@ -127,14 +166,18 @@ function Helicopter({
   const group = useRef<THREE.Group>(null);
   const mainRotor = useRef<THREE.Mesh>(null);
   const tailRotor = useRef<THREE.Mesh>(null);
-  const light = useRef<THREE.PointLight>(null);
+  const beacon = useRef<THREE.Mesh>(null);
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime * speed + phase;
     const g = group.current;
     if (g) {
       // Orbit with a lazy bob and a bank into the turn.
-      g.position.set(Math.cos(t) * radius, height + Math.sin(t * 2.3) * 3.5, Math.sin(t) * radius);
+      g.position.set(
+        Math.cos(t) * radius,
+        height + Math.sin(t * 2.3) * 3.5,
+        Math.sin(t) * radius,
+      );
       g.rotation.y = -t + Math.PI / 2;
       g.rotation.z = Math.sin(t) * 0.06 - 0.16;
       g.rotation.x = Math.sin(t * 1.7) * 0.03;
@@ -142,8 +185,10 @@ function Helicopter({
     // Rotors spin on their own clock so they read as fast even at low FPS.
     if (mainRotor.current) mainRotor.current.rotation.y += delta * 44;
     if (tailRotor.current) tailRotor.current.rotation.x += delta * 62;
-    if (light.current) {
-      light.current.intensity = 5 + Math.sin(state.clock.elapsedTime * 9 + phase) * 4.5;
+    if (beacon.current) {
+      const material = beacon.current.material as THREE.MeshBasicMaterial;
+      material.opacity =
+        0.35 + Math.abs(Math.sin(state.clock.elapsedTime * 4.5 + phase)) * 0.65;
     }
   });
 
@@ -152,7 +197,11 @@ function Helicopter({
       {/* Fuselage */}
       <mesh castShadow>
         <capsuleGeometry args={[1.5, 4.2, 4, 12]} />
-        <meshStandardMaterial color="#1c2126" roughness={0.72} metalness={0.55} />
+        <meshStandardMaterial
+          color="#1c2126"
+          roughness={0.72}
+          metalness={0.55}
+        />
       </mesh>
       {/* Cockpit glass */}
       <mesh position={[2.6, 0.3, 0]}>
@@ -167,7 +216,11 @@ function Helicopter({
       {/* Tail boom */}
       <mesh position={[-4.4, 0.35, 0]} rotation={[0, 0, Math.PI / 2]}>
         <cylinderGeometry args={[0.34, 0.6, 5.2, 8]} />
-        <meshStandardMaterial color="#1c2126" roughness={0.72} metalness={0.5} />
+        <meshStandardMaterial
+          color="#1c2126"
+          roughness={0.72}
+          metalness={0.5}
+        />
       </mesh>
       {/* Vertical stabiliser */}
       <mesh position={[-6.7, 1.3, 0]}>
@@ -189,7 +242,12 @@ function Helicopter({
       {/* Main rotor disc — a translucent blurred disc reads better than blades */}
       <mesh ref={mainRotor} position={[0, 2.5, 0]}>
         <cylinderGeometry args={[8.4, 8.4, 0.06, 24]} />
-        <meshBasicMaterial color="#0c1013" transparent opacity={0.24} side={THREE.DoubleSide} />
+        <meshBasicMaterial
+          color="#0c1013"
+          transparent
+          opacity={0.24}
+          side={THREE.DoubleSide}
+        />
       </mesh>
       {[0, Math.PI / 2].map((r) => (
         <mesh key={r} position={[0, 2.52, 0]} rotation={[0, r, 0]}>
@@ -198,27 +256,32 @@ function Helicopter({
         </mesh>
       ))}
       {/* Tail rotor */}
-      <mesh ref={tailRotor} position={[-6.8, 1.3, 0.28]} rotation={[0, 0, Math.PI / 2]}>
+      <mesh
+        ref={tailRotor}
+        position={[-6.8, 1.3, 0.28]}
+        rotation={[0, 0, Math.PI / 2]}
+      >
         <cylinderGeometry args={[1.5, 1.5, 0.05, 16]} />
-        <meshBasicMaterial color="#0c1013" transparent opacity={0.3} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Anti-collision beacon */}
-      <pointLight ref={light} position={[0, -2.2, 0]} color="#ff1f3d" intensity={6} distance={40} />
-      <mesh position={[0, -2.2, 0]}>
-        <sphereGeometry args={[0.28, 8, 8]} />
-        <meshBasicMaterial color="#ff2b44" />
-      </mesh>
-      {/* Searchlight cone */}
-      <mesh position={[2.2, -1.6, 0]} rotation={[0, 0, 0.3]}>
-        <coneGeometry args={[2.6, 16, 12, 1, true]} />
         <meshBasicMaterial
-          color="#ffd7a0"
+          color="#0c1013"
           transparent
-          opacity={0.045}
+          opacity={0.3}
           side={THREE.DoubleSide}
-          depthWrite={false}
         />
       </mesh>
+      {/* Anti-collision beacon.
+          This was a real pointLight. At 50m altitude it illuminated nothing —
+          the terrain is far outside its falloff — so it cost a lighting term
+          on every lit material in the scene purely to make a 0.28-unit sphere
+          look bright. An unlit sphere whose opacity is pulsed reads exactly
+          the same and costs nothing. */}
+      <mesh ref={beacon} position={[0, -2.2, 0]}>
+        <sphereGeometry args={[0.3, 6, 6]} />
+        <meshBasicMaterial color="#ff2b44" transparent />
+      </mesh>
+      {/* The searchlight cone was a 16-unit double-sided transparent volume at
+          4.5% opacity — two blended passes over a large screen area for
+          something almost invisible against the fog. Removed. */}
     </group>
   );
 }
@@ -251,13 +314,21 @@ function SupplyPlane() {
       {/* Wing */}
       <mesh position={[0, 0.7, 0.5]}>
         <boxGeometry args={[22, 0.34, 3]} />
-        <meshStandardMaterial color="#1a1f23" roughness={0.75} metalness={0.35} />
+        <meshStandardMaterial
+          color="#1a1f23"
+          roughness={0.75}
+          metalness={0.35}
+        />
       </mesh>
       {/* Engines */}
       {[-6.5, -3.4, 3.4, 6.5].map((x) => (
         <mesh key={x} position={[x, 0.35, 0.9]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.5, 0.44, 2.4, 8]} />
-          <meshStandardMaterial color="#12161a" metalness={0.7} roughness={0.4} />
+          <meshStandardMaterial
+            color="#12161a"
+            metalness={0.7}
+            roughness={0.4}
+          />
         </mesh>
       ))}
       {/* Tail */}
@@ -271,9 +342,19 @@ function SupplyPlane() {
       </mesh>
       {/* Contrails */}
       {[-5, 5].map((x, i) => (
-        <mesh key={x} ref={i === 0 ? trailA : undefined} position={[x, 0.35, -16]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh
+          key={x}
+          ref={i === 0 ? trailA : undefined}
+          position={[x, 0.35, -16]}
+          rotation={[Math.PI / 2, 0, 0]}
+        >
           <cylinderGeometry args={[0.34, 1.5, 30, 8, 1, true]} />
-          <meshBasicMaterial color="#c8d4dc" transparent opacity={0.11} depthWrite={false} />
+          <meshBasicMaterial
+            color="#c8d4dc"
+            transparent
+            opacity={0.11}
+            depthWrite={false}
+          />
         </mesh>
       ))}
     </group>
@@ -284,34 +365,58 @@ function SupplyPlane() {
 /* Fire + smoke                                                               */
 /* -------------------------------------------------------------------------- */
 
-/** Procedural soft-particle sprite — a radial falloff drawn once into a canvas. */
+/**
+ * Procedural soft-particle sprite — a radial falloff drawn once into a canvas.
+ *
+ * Cached at module scope. `useMemo` only dedupes per component instance, so
+ * every SmokeColumn and every Fire was building and uploading its own 128×128
+ * texture. They are all identical, and the GPU is happy to share one.
+ */
+let smokeTextureCache: THREE.CanvasTexture | null = null;
+
 function useSmokeTexture() {
   return useMemo(() => {
+    if (smokeTextureCache) return smokeTextureCache;
+
     const size = 128;
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     if (!ctx) return null;
 
-    const grd = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    grd.addColorStop(0, 'rgba(255,255,255,0.85)');
-    grd.addColorStop(0.4, 'rgba(255,255,255,0.28)');
-    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    const grd = ctx.createRadialGradient(
+      size / 2,
+      size / 2,
+      0,
+      size / 2,
+      size / 2,
+      size / 2,
+    );
+    grd.addColorStop(0, "rgba(255,255,255,0.85)");
+    grd.addColorStop(0.4, "rgba(255,255,255,0.28)");
+    grd.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = grd;
     ctx.fillRect(0, 0, size, size);
 
     // Break up the perfect circle so plumes don't look like bokeh.
-    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalCompositeOperation = "destination-out";
     for (let i = 0; i < 22; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = 18 + Math.random() * 44;
       ctx.beginPath();
-      ctx.arc(size / 2 + Math.cos(a) * r, size / 2 + Math.sin(a) * r, 6 + Math.random() * 14, 0, Math.PI * 2);
+      ctx.arc(
+        size / 2 + Math.cos(a) * r,
+        size / 2 + Math.sin(a) * r,
+        6 + Math.random() * 14,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
+    smokeTextureCache = texture;
     return texture;
   }, []);
 }
@@ -320,7 +425,7 @@ function useSmokeTexture() {
 function SmokeColumn({
   position,
   count = 26,
-  tint = '#5b6167',
+  tint = "#5b6167",
   spread = 6,
   rise = 34,
   speed = 0.5,
@@ -341,8 +446,8 @@ function SmokeColumn({
       Array.from({ length: count }, (_, i) => ({
         offset: (i / count) * rise,
         angle: (i * 2.399) % (Math.PI * 2),
-        radius: 0.5 + ((i * 37) % 100) / 100 * spread,
-        scale: 5 + ((i * 61) % 100) / 100 * 9,
+        radius: 0.5 + (((i * 37) % 100) / 100) * spread,
+        scale: 5 + (((i * 61) % 100) / 100) * 9,
         drift: 0.4 + ((i * 17) % 100) / 100,
         spin: (((i * 29) % 100) / 100 - 0.5) * 0.4,
       })),
@@ -378,7 +483,11 @@ function SmokeColumn({
   if (!texture) return null;
 
   return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, count]} position={position}>
+    <instancedMesh
+      ref={mesh}
+      args={[undefined, undefined, count]}
+      position={position}
+    >
       <planeGeometry args={[1, 1]} />
       <meshBasicMaterial
         map={texture}
@@ -393,7 +502,13 @@ function SmokeColumn({
 }
 
 /** Burning wreckage: a flickering light plus an additive flame billboard. */
-function Fire({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
+function Fire({
+  position,
+  scale = 1,
+}: {
+  position: [number, number, number];
+  scale?: number;
+}) {
   const light = useRef<THREE.PointLight>(null);
   const flame = useRef<THREE.Mesh>(null);
   const texture = useSmokeTexture();
@@ -402,17 +517,31 @@ function Fire({ position, scale = 1 }: { position: [number, number, number]; sca
     const t = state.clock.elapsedTime;
     // Layered sines approximate the irregular flicker of a real fire.
     const flicker =
-      0.62 + Math.sin(t * 11) * 0.16 + Math.sin(t * 23.7) * 0.11 + Math.sin(t * 4.3) * 0.11;
+      0.62 +
+      Math.sin(t * 11) * 0.16 +
+      Math.sin(t * 23.7) * 0.11 +
+      Math.sin(t * 4.3) * 0.11;
     if (light.current) light.current.intensity = 180 * flicker * scale;
     if (flame.current) {
-      flame.current.scale.set(scale * (7 + flicker * 2), scale * (10 + flicker * 4), 1);
-      (flame.current.material as THREE.MeshBasicMaterial).opacity = 0.4 * flicker;
+      flame.current.scale.set(
+        scale * (7 + flicker * 2),
+        scale * (10 + flicker * 4),
+        1,
+      );
+      (flame.current.material as THREE.MeshBasicMaterial).opacity =
+        0.4 * flicker;
     }
   });
 
   return (
     <group position={position}>
-      <pointLight ref={light} color="#ff7a22" intensity={180} distance={130} decay={2} />
+      <pointLight
+        ref={light}
+        color="#ff7a22"
+        intensity={180}
+        distance={130}
+        decay={2}
+      />
       {texture ? (
         <mesh ref={flame} position={[0, 5, 0]}>
           <planeGeometry args={[1, 1]} />
@@ -493,35 +622,32 @@ function CameraRig({ progress }: { progress: RefObject<number> }) {
 /* Scene                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Scene({ progress, quality }: Props) {
-  const low = quality === 'low';
+function Scene({ progress, quality }: Omit<Props, "active">) {
+  const low = quality === "low";
 
   return (
     <>
       {/* Dense fog is what sells the scale — and it lets the terrain end
           without ever showing an edge. */}
-      <fogExp2 attach="fog" args={['#0a0c10', 0.0042]} />
-      <color attach="background" args={['#05070a']} />
+      <fogExp2 attach="fog" args={["#0a0c10", 0.0042]} />
+      <color attach="background" args={["#05070a"]} />
 
-      {/* Key light: a low, warm sun raking across the valley */}
+      {/* Key light: a low, warm sun raking across the valley.
+          Shadows are off: the only casters are aircraft 50m above a terrain
+          that is almost entirely obscured by fog, so the shadow pass rendered
+          the whole scene a second time each frame for a result you cannot
+          actually see. */}
       <directionalLight
         position={[-120, 70, -90]}
         intensity={2.1}
         color="#ffb066"
-        castShadow={!low}
-        shadow-mapSize={[1024, 1024]}
-        shadow-camera-far={400}
-        shadow-camera-left={-180}
-        shadow-camera-right={180}
-        shadow-camera-top={180}
-        shadow-camera-bottom={-180}
-        shadow-bias={-0.0008}
       />
-      {/* Fill: cold skylight from the opposite side */}
-      <directionalLight position={[90, 40, 120]} intensity={0.5} color="#4d7fa8" />
-      <ambientLight intensity={0.22} color="#2a3742" />
-      {/* Warm bounce from the fires */}
-      <hemisphereLight args={['#3a2a1c', '#0a0c10', 0.5]} />
+      {/* Every light adds a per-fragment term to every lit material, so the
+          rig is kept to three. The old cold fill directional is gone: the
+          hemisphere light already supplies sky-vs-ground colour separation
+          for a fraction of the cost. */}
+      <ambientLight intensity={0.24} color="#2a3742" />
+      <hemisphereLight args={["#3a2a1c", "#0a1018", 0.75]} />
 
       <Terrain />
 
@@ -531,23 +657,54 @@ function Scene({ progress, quality }: Props) {
 
       <SupplyPlane />
 
-      <Helicopter radius={130} height={54} speed={0.16} phase={0} scale={1.15} />
-      <Helicopter radius={190} height={72} speed={0.11} phase={2.4} scale={0.85} />
-      {!low && <Helicopter radius={92} height={40} speed={0.22} phase={4.1} scale={0.6} />}
-
-      <Fire position={[-58, -22, -46]} scale={1.25} />
-      <Fire position={[74, -20, -104]} scale={0.95} />
-      {!low && <Fire position={[18, -24, 22]} scale={0.6} />}
-
-      <SmokeColumn position={[-58, -20, -46]} count={low ? 14 : 28} tint="#4a5158" rise={46} />
-      <SmokeColumn position={[74, -18, -104]} count={low ? 12 : 22} tint="#3f464c" rise={58} speed={0.34} />
+      {/* Two helicopters, not three. Each is ~10 meshes plus a point light, and
+          the third was small enough on screen to be near-indistinguishable. */}
+      <Helicopter
+        radius={130}
+        height={54}
+        speed={0.16}
+        phase={0}
+        scale={1.15}
+      />
       {!low && (
-        <SmokeColumn position={[18, -22, 22]} count={16} tint="#565d64" rise={30} speed={0.7} spread={4} />
+        <Helicopter
+          radius={190}
+          height={72}
+          speed={0.11}
+          phase={2.4}
+          scale={0.85}
+        />
       )}
 
-      {/* Floating dust and ash — drei's Sparkles is a single shader draw call */}
+      {/* Point lights are the expensive part of the lighting rig — every one
+          adds a per-fragment term to every lit material in range. Two. */}
+      <Fire position={[-58, -22, -46]} scale={1.25} />
+      {!low && <Fire position={[74, -20, -104]} scale={0.95} />}
+
+      {/* Smoke is the scene's main fill-rate cost: large, overlapping,
+          alpha-blended quads that the GPU must blend for every covered pixel,
+          with no depth rejection. Fewer, slightly smaller puffs read the same
+          through fog but shade a fraction of the fragments. */}
+      <SmokeColumn
+        position={[-58, -20, -46]}
+        count={low ? 8 : 13}
+        tint="#4a5158"
+        rise={46}
+      />
+      {!low && (
+        <SmokeColumn
+          position={[74, -18, -104]}
+          count={10}
+          tint="#3f464c"
+          rise={58}
+          speed={0.34}
+        />
+      )}
+
+      {/* Floating dust and ash — drei's Sparkles is a single shader draw call,
+          but the fragment cost still scales with count × on-screen size. */}
       <Sparkles
-        count={low ? 90 : 260}
+        count={low ? 45 : 90}
         scale={[300, 90, 300]}
         position={[0, 20, 0]}
         size={2.4}
@@ -556,7 +713,7 @@ function Scene({ progress, quality }: Props) {
         color="#d8c3a0"
       />
       <Sparkles
-        count={low ? 40 : 110}
+        count={low ? 18 : 36}
         scale={[180, 60, 180]}
         position={[-30, 8, -20]}
         size={5}
@@ -571,17 +728,70 @@ function Scene({ progress, quality }: Props) {
   );
 }
 
-export default function Battlefield({ progress, quality = 'high' }: Props) {
-  const dprCap = useRef(quality === 'low' ? 1.25 : 1.75);
+/**
+ * Drops resolution before the frame rate drops.
+ *
+ * The previous version wrote the new cap into a ref, which React never reads
+ * again — so the scene reported adaptive quality while actually rendering at
+ * full resolution forever. `setDpr` from the R3F store applies immediately.
+ */
+function AdaptiveQuality({ max }: { max: number }) {
+  const setDpr = useThree((state) => state.setDpr);
+
+  return (
+    <PerformanceMonitor
+      // Step down gradually rather than falling off a cliff.
+      onDecline={() => setDpr(Math.max(0.5, max - 0.2))}
+      onIncline={() => setDpr(max)}
+      flipflops={3}
+      // After three oscillations, settle at the low setting and stop probing.
+      onFallback={() => setDpr(0.5)}
+    />
+  );
+}
+
+export default function Battlefield({
+  progress,
+  quality = "high",
+  active = true,
+}: Props) {
+  /* ------------------------------ RESOLUTION ------------------------------
+   * The single biggest remaining GPU lever, and the easiest one to tune.
+   *
+   * Fragment cost scales with the SQUARE of this number. On a 1596×1020 canvas:
+   *
+   *   1.00  →  1.63M pixels/frame   (what a plain 1× display was doing)
+   *   0.85  →  1.18M   (−28%)
+   *   0.70  →  0.80M   (−51%)
+   *   0.60  →  0.59M   (−64%)
+   *
+   * Rendering below 1 and letting the browser upscale is very forgiving here:
+   * the scene is dark, fog-heavy and low-contrast, it sits *behind* the
+   * headline rather than being read directly, and a film-grain overlay is
+   * composited on top of it — all of which hide softness. Antialiasing is
+   * already off for the same reason.
+   *
+   * Note the max must be below 1: R3F clamps the device's real pixel ratio into
+   * [min, max], so on a standard 1× laptop display a max of 1.25 still resolves
+   * to 1.0 and nothing changes.
+   *
+   * If it still runs hot, drop these — 0.6 / 0.5 is still perfectly presentable.
+   * ---------------------------------------------------------------------- */
+  const dprMax = quality === "low" ? 0.65 : 0.85;
 
   return (
     <Canvas
-      className="!absolute inset-0"
-      shadows={quality === 'high'}
-      dpr={[1, dprCap.current]}
+      className="absolute! inset-0"
+      shadows={false}
+      dpr={[0.5, dprMax]}
+      // The single biggest win in this file: the hero is only ~3 screens tall,
+      // but the canvas used to keep rendering the full scene at 60fps for the
+      // entire rest of the page. Suspending the loop once it scrolls out of
+      // view hands the GPU back to everything below.
+      frameloop={active ? "always" : "never"}
       gl={{
         antialias: false, // FXAA-free; the grain overlay hides aliasing anyway
-        powerPreference: 'high-performance',
+        powerPreference: "high-performance",
         alpha: false,
         stencil: false,
         depth: true,
@@ -593,11 +803,7 @@ export default function Battlefield({ progress, quality = 'high' }: Props) {
       }}
     >
       {/* Drop DPR before dropping frames when the GPU can't keep up. */}
-      <PerformanceMonitor
-        onDecline={() => {
-          dprCap.current = 1;
-        }}
-      />
+      <AdaptiveQuality max={dprMax} />
       <AdaptiveDpr pixelated={false} />
       <Scene progress={progress} quality={quality} />
     </Canvas>

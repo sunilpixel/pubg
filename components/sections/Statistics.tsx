@@ -3,6 +3,7 @@
 import { useRef } from 'react';
 import { gsap } from '@/lib/gsap';
 import { useGsapContext } from '@/hooks/useGsapContext';
+import { useRevealOnce } from '@/hooks/useRevealOnce';
 import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { Counter } from '@/components/ui/Counter';
@@ -27,6 +28,12 @@ const RADAR_AXES = [
 export function Statistics() {
   const sectionRef = useRef<HTMLElement>(null);
   const reduced = usePrefersReducedMotion();
+
+  // Content reveals run on IntersectionObserver; only the decorative SVG
+  // line-drawing below stays on ScrollTrigger, because if that one fails to
+  // fire the radar simply renders complete rather than disappearing.
+  useRevealOnce(sectionRef, '.stat-tile', { y: 50, duration: 0.75, stagger: 0.05 });
+  useRevealOnce(sectionRef, '.achievement-row', { y: 30, duration: 0.6, stagger: 0.045 });
 
   useGsapContext(
     () => {
@@ -77,23 +84,6 @@ export function Statistics() {
         scrollTrigger: { trigger: '.radar', start: 'top 82%', once: true },
       });
 
-      gsap.from('.stat-tile', {
-        y: 60,
-        opacity: 0,
-        duration: 0.9,
-        ease: 'cinema',
-        stagger: 0.07,
-        scrollTrigger: { trigger: '.stat-grid', start: 'top 86%', once: true },
-      });
-
-      gsap.from('.achievement-row', {
-        x: -40,
-        opacity: 0,
-        duration: 0.75,
-        ease: 'cinema',
-        stagger: 0.06,
-        scrollTrigger: { trigger: '.achievement-list', start: 'top 86%', once: true },
-      });
     },
     sectionRef,
     [reduced],
