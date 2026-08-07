@@ -1,7 +1,8 @@
 'use client';
 
-import { memo, useId, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { ridged } from '@/lib/noise';
+import { stableId } from '@/lib/utils';
 import type { BattleMap } from '@/lib/types';
 
 /**
@@ -46,7 +47,10 @@ function ridgePath(seed: number, amplitude: number, base: number, segments = 56)
 const TREE_COUNT = 14;
 
 function MapSceneBase({ map, className }: Props) {
-  const uid = useId().replace(/:/g, '');
+  // Keyed off the map rather than the tree — see stableId for why useId cannot
+  // be used here. Every gradient below is a function of `map`, so one card per
+  // map means one set of defs per map.
+  const uid = stableId(`map:${map.id}`);
   const [cool, warm] = map.palette;
   const seed = useMemo(
     () => map.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 97,

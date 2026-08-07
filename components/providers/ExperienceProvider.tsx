@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { unlockAudio } from '@/lib/audio';
 
 type ExperienceState = {
   /** True once the weapon-assembly loader has handed off to the hero. */
@@ -42,7 +43,13 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
 
   const markReady = useCallback(() => setReady(true), []);
   const markPreparing = useCallback(() => setPreparing(true), []);
-  const toggleAudio = useCallback(() => setAudioEnabled((v) => !v), []);
+  const toggleAudio = useCallback(() => {
+    // Build/resume the AudioContext inside this click. Leaving it to whatever
+    // sound fires first risks doing it outside a user gesture — and the browser
+    // drops that one on the floor.
+    if (!audioEnabled) unlockAudio();
+    setAudioEnabled((v) => !v);
+  }, [audioEnabled]);
 
   const value = useMemo(
     () => ({

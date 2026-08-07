@@ -1,7 +1,8 @@
 'use client';
 
-import { memo, useId, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { ridged } from '@/lib/noise';
+import { stableId } from '@/lib/utils';
 import type { GalleryShot } from '@/lib/data/world';
 
 /**
@@ -24,7 +25,7 @@ function ridgePath(seed: number, amplitude: number, base: number): string {
 }
 
 function ShotArtBase({ shot, className }: Props) {
-  const uid = useId().replace(/:/g, '');
+  const uid = stableId(`shot:${shot.id}`);
   const id = (n: string) => `${n}-${uid}`;
   const h = shot.hue;
 

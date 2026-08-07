@@ -87,41 +87,27 @@ export function Hero() {
    * then popping into 3D a moment later.
    *
    * The loader runs for several seconds with the network completely idle, so
-   * the import is kicked off there instead. `requestIdleCallback` is the point:
-   * it only fires when the main thread has spare time inside a frame, so
-   * parsing three.js slots into a gap rather than stuttering the assembly
-   * animation. The long timeout keeps it from forcing itself through during the
-   * explosion, which is the busiest stretch of the timeline.
+   * the import is kicked off there instead — immediately, on mount.
+   *
+   * This used to sit behind `requestIdleCallback(…, { timeout: 4000 })`, on the
+   * reasoning that parsing three.js should slot into a spare gap rather than
+   * stutter the assembly animation. In practice the timeout was doing the
+   * opposite of what it was for: it forced the parse through at roughly t=4s,
+   * the chunk then landed at ~4.3s, and the scene mounted and compiled its
+   * shaders straight into the shot at t=5.3s — the one moment in the sequence
+   * that cannot absorb a stall. Deferring the *download* only pushed the
+   * *blocking* part later, and later was strictly worse.
+   *
+   * Starting now costs nothing: the download is off-thread, and the parse lands
+   * in the loader's opening second, where a page is expected to be busy and
+   * nothing has started moving yet.
    *
    * Skipped entirely when the scene will not be shown — a machine that fails
    * the tier check should never pay for the download at all.
    */
   useEffect(() => {
     if (ready || reduced || tier === "off") return;
-
-    let cancelled = false;
-    const warm = () => {
-      if (!cancelled) void import("@/components/three/Battlefield");
-    };
-
-    const win = window as Window & {
-      requestIdleCallback?: typeof requestIdleCallback;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-
-    if (win.requestIdleCallback) {
-      const handle = win.requestIdleCallback(warm, { timeout: 4000 });
-      return () => {
-        cancelled = true;
-        win.cancelIdleCallback?.(handle as unknown as number);
-      };
-    }
-
-    const timer = window.setTimeout(warm, 1500);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    void import("@/components/three/Battlefield");
   }, [ready, reduced, tier]);
 
   /* ---------------- Entrance ----------------------------------------------
@@ -301,14 +287,23 @@ export function Hero() {
           }}
         />
 
-        {/* 3D battlefield — mounted only after the loader clears so the intro
-            never competes with shader compilation for the main thread. */}
+        {/* 3D battlefield. Mounted early, while the loader is still up, so the
+            shader compilation is over long before the cold open reaches its
+            shot — see the warm-up effect above.
+
+            `active` is gated on `ready`, not just `inView`. The canvas is in
+            the viewport from the moment it mounts, but it is behind an opaque
+            curtain until the loader hands off, and a scene rendering at 60fps
+            behind that curtain would spend four seconds taking GPU away from
+            the very animation it is trying not to disturb. Held inactive it
+            still renders the single frame that compiles everything (see
+            frameloop in Battlefield), then sits idle until the reveal. */}
         {show3D ? (
           <div className="absolute inset-0">
             <Battlefield
               progress={progressRef}
               quality={quality}
-              active={inView}
+              active={ready && inView}
             />
           </div>
         ) : (

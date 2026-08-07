@@ -1,6 +1,7 @@
 'use client';
 
-import { memo, useId } from 'react';
+import { memo } from 'react';
+import { stableId } from '@/lib/utils';
 import type { Vehicle } from '@/lib/types';
 
 /**
@@ -80,7 +81,7 @@ function Wheel({
 }
 
 function VehicleArtBase({ vehicle, className }: Props) {
-  const uid = useId().replace(/:/g, '');
+  const uid = stableId(`vehicle:${vehicle.id}`);
   const id = (n: string) => `${n}-${uid}`;
   const accent = vehicle.accent;
 

@@ -7,7 +7,16 @@ import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { useExperience } from '@/components/providers/ExperienceProvider';
 import { WeaponArt } from '@/components/art/WeaponArt';
 import { STAT_LABELS, TIER_META } from '@/lib/data/weapons';
-import { playClick, playReload, playShot, playUi, SHOT_PROFILES } from '@/lib/audio';
+import {
+  playBlast,
+  playClick,
+  playReload,
+  playShot,
+  playSlash,
+  playSmoke,
+  playUi,
+  SHOT_PROFILES,
+} from '@/lib/audio';
 import type { Weapon } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -40,9 +49,25 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
   const [busy, setBusy] = useState(false);
 
   const reduced = usePrefersReducedMotion();
-  const { audioEnabled } = useExperience();
+  const { audioEnabled, toggleAudio } = useExperience();
   const tier = TIER_META[weapon.tier];
   const capacity = weapon.stats.magazine || 1;
+
+  /**
+   * What "firing" means for this weapon.
+   *
+   * A grenade has no muzzle to flash, no tracer and no case to eject; a knife
+   * has none of those either but does have an arc. Showing a gunshot for all
+   * three was simply wrong.
+   */
+  const effect: 'shot' | 'blast' | 'slash' =
+    weapon.category === 'throwable' || weapon.category === 'launcher'
+      ? 'blast'
+      : weapon.category === 'melee'
+        ? 'slash'
+        : 'shot';
+
+  const FIRE_LABEL = { shot: 'Fire', blast: 'Detonate', slash: 'Strike' } as const;
 
   /* ------------------------------ OPEN ---------------------------------- */
   useIsomorphicLayoutEffect(() => {
@@ -55,9 +80,12 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
 
       // Backdrop + blur of the page behind
       tl.fromTo(
+        // Opacity only. Animating `backdrop-filter` makes the compositor
+        // re-blur everything behind a full-screen element on every frame of the
+        // tween, which is the single most expensive thing this overlay did.
         '.detail-scrim',
-        { opacity: 0, backdropFilter: 'blur(0px)' },
-        { opacity: 1, backdropFilter: 'blur(26px)', duration: 0.7 },
+        { opacity: 0 },
+        { opacity: 1, duration: 0.5 },
         0,
       );
 
@@ -145,7 +173,9 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
   const fire = useCallback(() => {
     if (busy) return;
     if (ammo <= 0) {
-      playUi({ pitch: 0.5, gain: audioEnabled ? 0.2 : 0 });
+      // Gated like every other cue: a gain of 0 still built the graph and woke
+      // the AudioContext for a user who had asked for silence.
+      if (audioEnabled) playUi({ pitch: 0.5, gain: 0.2 });
       // Dry fire: a hard shake and a red flash on the counter.
       gsap.fromTo(
         '.ammo-readout',
@@ -157,18 +187,159 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
 
     setAmmo((n) => Math.max(0, n - 1));
 
-    if (audioEnabled) playShot(SHOT_PROFILES[weapon.category] ?? {});
-
     const q = gsap.utils.selector(stageRef);
     const isHeavy = ['sniper-rifle', 'shotgun', 'launcher', 'lmg'].includes(weapon.category);
     const power = isHeavy ? 1.6 : 1;
 
     const tl = gsap.timeline();
 
+    /* ------------------------- BLAST: throwables + launchers ---------------
+     * A grenade has no muzzle, no tracer and no ejected case. Firing one
+     * detonates it: a shockwave ring expanding from the body, a fireball, and
+     * debris thrown outward — plus signal smoke for a smoke canister.
+     */
+    if (effect === 'blast') {
+      const signal = weapon.id === 'thr-veil';
+
+      if (audioEnabled) {
+        playBlast({ gain: isHeavy ? 1 : 0.85 });
+        if (signal) playSmoke({ gain: 0.4, duration: 2.2 });
+      }
+
+      tl.fromTo(
+        q('.blast-core'),
+        { opacity: 0, scale: 0.15 },
+        { opacity: 1, scale: 1.5, duration: 0.09, ease: 'power4.out' },
+        0,
+      )
+        .to(q('.blast-core'), { opacity: 0, scale: 2.6, duration: 0.5, ease: 'power2.in' }, 0.09)
+        // Shockwave rings
+        .fromTo(
+          q('.blast-ring'),
+          { opacity: 0.9, scale: 0.1 },
+          {
+            opacity: 0,
+            scale: 3.6,
+            duration: 0.95,
+            ease: 'power3.out',
+            stagger: 0.07,
+          },
+          0.02,
+        )
+        // Debris thrown in every direction
+        .fromTo(
+          q('.debris'),
+          { opacity: 1, x: 0, y: 0, scale: 1, rotate: 0 },
+          {
+            x: () => gsap.utils.random(-260, 260),
+            y: () => gsap.utils.random(-200, 200),
+            rotate: () => gsap.utils.random(-540, 540),
+            scale: 0,
+            opacity: 0,
+            duration: 1,
+            ease: 'power2.out',
+            stagger: 0.01,
+          },
+          0.03,
+        )
+        // Rolling smoke cloud — red for a signal canister, grey otherwise
+        .fromTo(
+          q('.blast-smoke'),
+          { opacity: 0, scale: 0.3 },
+          { opacity: signal ? 0.75 : 0.5, scale: 1.4, duration: 0.5, ease: 'power2.out' },
+          0.06,
+        )
+        .to(
+          q('.blast-smoke'),
+          { opacity: 0, scale: 3, y: -70, duration: 1.9, ease: 'power2.out' },
+          0.55,
+        )
+        // The grenade itself is thrown by its own detonation
+        .to(
+          rotatorRef.current,
+          { scale: 1.12, duration: 0.08, ease: 'power3.out' },
+          0,
+        )
+        .to(rotatorRef.current, { scale: 1, duration: 0.9, ease: 'elastic.out(1, 0.3)' }, 0.08)
+        // Heavier, longer camera shake than a gunshot
+        .to(
+          stageRef.current,
+          {
+            keyframes: {
+              x: [0, -26, 21, -14, 8, -4, 0],
+              y: [0, 17, -13, 8, -4, 2, 0],
+              duration: 0.7,
+            },
+            ease: 'none',
+          },
+          0,
+        );
+
+      return;
+    }
+
+    /* ------------------------------ SLASH: melee ---------------------------
+     * No projectile at all. The blade sweeps through an arc, leaving a bright
+     * trail behind the edge and a short spray of sparks where it bites.
+     */
+    if (effect === 'slash') {
+      if (audioEnabled) playSlash();
+
+      tl.fromTo(
+        q('.slash-arc'),
+        { opacity: 0, rotate: -55, scale: 0.7 },
+        { opacity: 1, rotate: 10, scale: 1.15, duration: 0.16, ease: 'power3.out' },
+        0,
+      )
+        .to(q('.slash-arc'), { opacity: 0, rotate: 34, duration: 0.28, ease: 'power2.in' }, 0.16)
+        // The weapon swings with it
+        .to(
+          rotatorRef.current,
+          { rotate: -22, x: -30, duration: 0.13, ease: 'power3.out' },
+          0,
+        )
+        .to(
+          rotatorRef.current,
+          { rotate: 0, x: 0, duration: 0.75, ease: 'elastic.out(1, 0.4)' },
+          0.15,
+        )
+        // Sparks where the edge connects
+        .fromTo(
+          q('.spark'),
+          { opacity: 1, x: 0, y: 0, scale: 1 },
+          {
+            x: () => gsap.utils.random(40, 190),
+            y: () => gsap.utils.random(-120, 40),
+            scale: 0,
+            opacity: 0,
+            duration: 0.5,
+            ease: 'power2.out',
+            stagger: 0.006,
+          },
+          0.08,
+        )
+        // A light shake — a swing, not a detonation
+        .to(
+          stageRef.current,
+          {
+            keyframes: { x: [0, -7, 5, -3, 0], y: [0, 4, -3, 1, 0], duration: 0.3 },
+            ease: 'none',
+          },
+          0.02,
+        );
+
+      return;
+    }
+
+    /* ------------------------------ SHOT: firearms ------------------------- */
+    if (audioEnabled) playShot(SHOT_PROFILES[weapon.category] ?? {});
+
     // Heat shimmer is an SVG filter, so it can't be tweened as a style —
-    // tween a plain object and write the attribute each frame instead.
+    // tween a plain object and write the attribute each frame instead. The
+    // filter is only attached to the artwork for the duration of the shot.
     const heat = { scale: 0 };
     const heatNode = document.getElementById('heat-displace');
+    const artNode = artRef.current;
     const writeHeat = () => heatNode?.setAttribute('scale', heat.scale.toFixed(2));
 
     // --- Muzzle flash: a bright core plus a four-point star, both very brief
@@ -196,9 +367,26 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
       )
       .to(q('.bullet-trail'), { x: 520, opacity: 0, duration: 0.28, ease: 'power2.in' }, 0.07)
 
-      // --- Heat shimmer: spike the displacement, then let it cool off
+      // --- Heat shimmer: attach the filter, spike it, then detach on the way
+      // out so the turbulence is not being regenerated for the rest of the
+      // session.
+      .call(
+        () => {
+          if (artNode) artNode.style.filter = 'url(#heat-shimmer)';
+        },
+        undefined,
+        0,
+      )
       .to(heat, { scale: 22 * power, duration: 0.1, ease: 'power2.out', onUpdate: writeHeat }, 0)
-      .to(heat, { scale: 0, duration: 0.62, ease: 'power2.in', onUpdate: writeHeat }, 0.1)
+      .to(heat, {
+        scale: 0,
+        duration: 0.62,
+        ease: 'power2.in',
+        onUpdate: writeHeat,
+        onComplete: () => {
+          if (artNode) artNode.style.filter = '';
+        },
+      }, 0.1)
 
       // --- Recoil: the weapon kicks back and up, then settles elastically
       .to(
@@ -275,7 +463,7 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
         },
         0.02,
       );
-  }, [ammo, busy, weapon.category, audioEnabled]);
+  }, [ammo, busy, weapon.category, weapon.id, effect, audioEnabled]);
 
   /* ------------------------------ RELOAD -------------------------------- */
   const reload = useCallback(() => {
@@ -384,8 +572,10 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
         type="button"
         aria-label="Close inspection"
         onClick={close}
-        className="detail-scrim absolute inset-0 h-full w-full cursor-default bg-void/88"
-        style={{ backdropFilter: 'blur(26px)' }}
+        // No `backdrop-filter`. At 96% opaque black there is essentially
+        // nothing left of the page behind this to blur, so the blur was pure
+        // cost — a full-viewport readback and blur on every composite.
+        className="detail-scrim absolute inset-0 h-full w-full cursor-default bg-void/96"
       />
 
       {/* Tier ambience */}
@@ -398,7 +588,11 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
         }}
       />
 
-      <div className="relative flex h-full flex-col overflow-y-auto px-5 py-6 sm:px-8 lg:px-12">
+      {/* overflow-x-hidden: the tracer travels 520px to the right and the
+          sparks scatter past the weapon, so firing pushed the page wide and
+          produced a horizontal scrollbar. Vertical scrolling is still needed
+          for the spec columns on short viewports. */}
+      <div className="relative flex h-full flex-col overflow-y-auto overflow-x-hidden px-5 py-6 sm:px-8 lg:px-12">
         {/* ------------------------------ Top bar ------------------------- */}
         <div className="spec-top flex shrink-0 items-start justify-between gap-4">
           <div className="min-w-0">
@@ -479,7 +673,12 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
                 className="relative gpu"
                 style={{ transformStyle: 'preserve-3d' }}
               >
-                <div ref={artRef} style={{ filter: 'url(#heat-shimmer)' }}>
+                {/* The heat filter is attached only while firing. Leaving an
+                    feTurbulence + feDisplacementMap permanently on the artwork
+                    meant every repaint of the weapon regenerated turbulence,
+                    even with the displacement scale at zero — a constant cost
+                    for an effect visible for half a second. */}
+                <div ref={artRef}>
                   <WeaponArt
                     spec={weapon.silhouette}
                     accent={tier.color}
@@ -497,7 +696,112 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
                   }}
                 />
 
-                {/* ---- Fire effects, anchored at the muzzle ---- */}
+                {/* ---- BLAST: grenades and launchers detonate ---- */}
+                {effect === 'blast' ? (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute"
+                    style={{ left: '50%', top: '50%' }}
+                  >
+                    {/* Fireball */}
+                    <span
+                      className="blast-core absolute h-56 w-56 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0"
+                      style={{
+                        background:
+                          'radial-gradient(circle, #fff 0%, #ffe08a 16%, #ff7a1a 38%, rgb(224 23 48 / .55) 58%, transparent 76%)',
+                        filter: 'blur(4px)',
+                      }}
+                    />
+                    {/* Shockwave rings */}
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="blast-ring absolute -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0"
+                        style={{
+                          width: `${150 + i * 46}px`,
+                          height: `${150 + i * 46}px`,
+                          border: `${2.5 - i * 0.6}px solid rgb(255 ${168 - i * 40} ${70 - i * 20} / ${0.85 - i * 0.2})`,
+                        }}
+                      />
+                    ))}
+                    {/* Rolling smoke — red for the signal canister */}
+                    <span
+                      className="blast-smoke absolute h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0"
+                      style={{
+                        background:
+                          weapon.id === 'thr-veil'
+                            ? 'radial-gradient(circle, rgb(255 70 80 / .75), rgb(150 20 30 / .3) 50%, transparent 74%)'
+                            : 'radial-gradient(circle, rgb(190 196 202 / .6), rgb(110 118 126 / .25) 50%, transparent 74%)',
+                        filter: 'blur(14px)',
+                      }}
+                    />
+                    {/* Debris */}
+                    {Array.from({ length: 20 }, (_, i) => (
+                      <span
+                        key={i}
+                        className="debris absolute -translate-x-1/2 -translate-y-1/2 opacity-0"
+                        style={{
+                          width: `${3 + (i % 4) * 2}px`,
+                          height: `${2 + (i % 3)}px`,
+                          borderRadius: '1px',
+                          background: i % 3 === 0 ? '#ffd166' : i % 3 === 1 ? '#ff6a1a' : '#8b969e',
+                          boxShadow: '0 0 6px currentColor',
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* ---- SLASH: the blade sweeps an arc ---- */}
+                {effect === 'slash' ? (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute"
+                    style={{ left: '62%', top: '48%' }}
+                  >
+                    <svg
+                      className="slash-arc absolute h-72 w-72 -translate-x-1/2 -translate-y-1/2 opacity-0"
+                      viewBox="0 0 200 200"
+                    >
+                      <defs>
+                        <linearGradient id="slash-edge" x1="0" y1="0" x2="1" y2="1">
+                          <stop offset="0%" stopColor="#fff" stopOpacity="0" />
+                          <stop offset="45%" stopColor="#fff" stopOpacity="0.95" />
+                          <stop offset="70%" stopColor="#bfe9ff" stopOpacity="0.7" />
+                          <stop offset="100%" stopColor="#bfe9ff" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {/* Wide soft sweep behind a hard bright edge */}
+                      <path
+                        d="M24 168 Q56 34 176 26 Q92 60 58 176 Z"
+                        fill="url(#slash-edge)"
+                        opacity="0.4"
+                      />
+                      <path
+                        d="M28 166 Q60 40 172 30"
+                        fill="none"
+                        stroke="url(#slash-edge)"
+                        strokeWidth="5"
+                        strokeLinecap="round"
+                        style={{ filter: 'drop-shadow(0 0 8px rgb(200 240 255 / .9))' }}
+                      />
+                    </svg>
+                    {/* Sparks where the edge bites */}
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <span
+                        key={i}
+                        className="spark absolute h-1 w-1 -translate-y-1/2 rounded-full opacity-0"
+                        style={{
+                          background: i % 2 ? '#dff2ff' : '#ffd166',
+                          boxShadow: '0 0 8px currentColor',
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* ---- SHOT: muzzle effects, anchored at the barrel ---- */}
+                {effect === 'shot' ? (
                 <div
                   aria-hidden
                   className="pointer-events-none absolute"
@@ -557,18 +861,22 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
                     />
                   ))}
                 </div>
+                ) : null}
 
-                {/* Ejected casing, anchored at the port */}
-                <span
-                  aria-hidden
-                  className="shell-casing pointer-events-none absolute h-4 w-1.5 rounded-sm opacity-0"
-                  style={{
-                    left: '52%',
-                    top: '40%',
-                    background: 'linear-gradient(180deg, #ffe0a3, #c69334 45%, #6d4d12)',
-                    boxShadow: '0 0 10px rgb(198 147 52 / .7)',
-                  }}
-                />
+                {/* Ejected casing — firearms only; nothing is ejected by a
+                    grenade or a blade. */}
+                {effect === 'shot' ? (
+                  <span
+                    aria-hidden
+                    className="shell-casing pointer-events-none absolute h-4 w-1.5 rounded-sm opacity-0"
+                    style={{
+                      left: '52%',
+                      top: '40%',
+                      background: 'linear-gradient(180deg, #ffe0a3, #c69334 45%, #6d4d12)',
+                      boxShadow: '0 0 10px rgb(198 147 52 / .7)',
+                    }}
+                  />
+                ) : null}
               </div>
 
               {/* Reflection plate */}
@@ -582,7 +890,16 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
                   filter: 'blur(2px)',
                 }}
               >
-                <WeaponArt spec={weapon.silhouette} accent={tier.color} className="h-auto w-full" sheen={false} />
+                {/* Low detail: this is a blurred 20%-opacity mirror, so the
+                    full drawing's own gradient defs and machining pattern were
+                    a second complete SVG rendered for nothing. */}
+                <WeaponArt
+                  spec={weapon.silhouette}
+                  accent={tier.color}
+                  className="h-auto w-full"
+                  sheen={false}
+                  lod="low"
+                />
               </div>
             </div>
           </div>
@@ -693,7 +1010,7 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
             <div className="flex flex-wrap items-center gap-2">
               <ActionButton label="Inspect" onClick={inspect} disabled={busy} active={mode === 'inspect'} />
               <ActionButton
-                label="Fire"
+                label={FIRE_LABEL[effect]}
                 onClick={fire}
                 disabled={busy}
                 tone="danger"
@@ -709,9 +1026,17 @@ export function WeaponDetail({ weapon, origin, onClose }: Props) {
           </div>
 
           {!audioEnabled ? (
-            <p className="mt-2 text-center font-mono text-[9px] uppercase tracking-[0.24em] text-ash">
-              Sound is off — enable audio in the header for synthesised weapon SFX
-            </p>
+            /* The bar's sound toggle sits behind this overlay, so the prompt has
+               to be the control — not a pointer to one you cannot reach. */
+            <button
+              type="button"
+              onClick={toggleAudio}
+              data-cursor="target"
+              className="mx-auto mt-3 flex w-fit items-center gap-2.5 rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 font-mono text-[9px] uppercase tracking-[0.24em] text-ash transition-colors hover:border-ember/60 hover:text-chalk"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-ember shadow-[0_0_8px_rgb(255_106_26/.9)]" />
+              Sound off — enable synthesised weapon SFX
+            </button>
           ) : null}
         </div>
       </div>

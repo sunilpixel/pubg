@@ -7,6 +7,14 @@ import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
 import { useExperience } from '@/components/providers/ExperienceProvider';
 import { VolumetricSmoke } from '@/components/ui/VolumetricSmoke';
 
+/** The weapon surface, and the bore within it. Everything the shot throws is
+ *  anchored to the bore rather than to the screen — that is what makes it read
+ *  as a discharge instead of a detonation. */
+const VIEW_W = 620;
+const VIEW_H = 260;
+const BORE_X = 586;
+const BORE_Y = 125;
+
 const BOOT_LINES = [
   'ESTABLISHING UPLINK · SECTOR 7',
   'ARMOURY MANIFEST · VERIFIED',
@@ -22,8 +30,14 @@ const BOOT_LINES = [
  * The cold open.
  *
  * A rifle assembles from disassembled parts, the magazine seats, the bolt
- * cycles, an ammo counter runs to 100, smoke rolls in, and a shaped explosion
- * blows the whole thing off screen into the hero.
+ * cycles, an ammo counter runs to 100, smoke rolls in, and the weapon fires —
+ * the muzzle flash takes the exposure with it and the camera runs down the
+ * bore into the hero.
+ *
+ * The finish is deliberately a *discharge*, not a detonation. A flash centred
+ * on the screen, concentric rings and debris thrown in every direction are all
+ * blast-wave cues; a shot is directional and brutally short — light at the
+ * bore, mass driven backwards, everything else leaving downrange.
  *
  * The entire sequence is one GSAP timeline so it can be scrubbed, skipped, or
  * replaced wholesale under `prefers-reduced-motion`.
@@ -48,7 +62,7 @@ export function Loader() {
   const skip = useCallback(() => {
     const tl = timelineRef.current;
     if (!tl) return finish();
-    // Jump to the explosion instead of cutting to black — a hard cut looks broken.
+    // Run to the shot instead of cutting to black — a hard cut looks broken.
     tl.timeScale(6);
   }, [finish]);
 
@@ -101,9 +115,22 @@ export function Loader() {
       gsap.set(q('#p-bolt'), { x: 40, opacity: 0 });
       gsap.set(q('.weapon-stage'), { scale: 0.94, rotate: -1.5 });
       gsap.set(q('.hud'), { opacity: 0, y: 20 });
-      gsap.set(q('.flash'), { opacity: 0, scale: 0 });
-      gsap.set(q('.shock'), { opacity: 0, scale: 0 });
-      gsap.set(q('.shard'), { opacity: 0 });
+      // Everything the shot throws pivots on the bore, not on its own centre,
+      // so the flash grows *out of* the muzzle rather than around it.
+      gsap.set(q('.muzzle-core, .muzzle-star, .muzzle-gas, .muzzle-smoke'), {
+        opacity: 0,
+        scale: 0,
+        svgOrigin: `${BORE_X} ${BORE_Y}`,
+      });
+      gsap.set(q('.spark'), { opacity: 0 });
+      // xPercent/yPercent rather than Tailwind's -translate-x-1/2: GSAP owns
+      // the transform on these two and would overwrite a class-based one.
+      gsap.set(q('.shot-bloom, .shot-ring'), {
+        opacity: 0,
+        scale: 0,
+        xPercent: -50,
+        yPercent: -50,
+      });
       gsap.set(q('.loader-smoke'), { opacity: 0 });
 
       const tl = gsap.timeline({ onComplete: finish, defaults: { ease: 'cinema' } });
@@ -111,7 +138,29 @@ export function Loader() {
 
       /* ---------------- 1. HUD boots up ---------------- */
       tl.to(q('.hud'), { opacity: 1, y: 0, duration: 0.7, stagger: 0.08 }, 0)
-        .call(() => setStatus(0), undefined, 0.1);
+        .call(() => setStatus(0), undefined, 0.1)
+        /* Bring the battlefield online behind the curtain, here, at the top.
+         *
+         * Mounting it creates a WebGL context, generates the terrain and the
+         * smoke texture, and compiles twenty-odd shader programs — all of it
+         * synchronous, all of it on the main thread. It is the only thing in
+         * this sequence capable of stalling the page for hundreds of
+         * milliseconds, so the only question that matters is where the stall
+         * lands.
+         *
+         * It used to fire half a second before the finale, on the reasoning
+         * that a detonation is violent enough to hide a stall inside it. That
+         * held while the finale was a 1.5s explosion. It stopped holding the
+         * moment the finale became a discharge: the shot is ~120ms, a stall on
+         * top of it does not read as violence, it reads as the page hanging —
+         * which is exactly how it was reported.
+         *
+         * Now it goes first. The chunk is already downloading (Hero kicks the
+         * import off on mount), nothing has started moving yet, and a busy
+         * first second is what a loader is *for*. By the time the receiver
+         * flies in, the scene is compiled and idle, and there are four clear
+         * seconds between it and the shot. */
+        .call(markPreparing, undefined, 0.15);
 
       /* ---------------- 2. Core parts fly in ---------------- */
       tl.to(
@@ -216,92 +265,164 @@ export function Loader() {
 
       /* ---------------- 7. Smoke rolls in ---------------- */
       tl.to(q('.loader-smoke'), { opacity: 1, duration: 1.2, ease: 'power1.out' }, 4.0)
-        .to(q('.weapon-stage'), { scale: 1.06, duration: 1.6, ease: 'power2.inOut' }, 4.0)
+        // Ends at 5.0 so the sight-picture beat below can take `scale` over
+        // cleanly — two live tweens on one property fight each frame.
+        .to(q('.weapon-stage'), { scale: 1.06, duration: 1.0, ease: 'power2.inOut' }, 4.0)
         .call(() => setStatus(7), undefined, 4.5);
 
-      /* ---------------- 8. Cinematic detonation ---------------- */
-      const boom = 5.3;
+      /* ---------------- 8. The shot ---------------- */
+      const shot = 5.3;
 
       tl
-        // Bring the battlefield online behind the curtain, on the charge-up.
-        // Creating the WebGL context and compiling its shaders blocks the main
-        // thread; doing it here buries that cost under the loudest moment of
-        // the sequence instead of dropping it on the frame the hero appears.
-        .call(markPreparing, undefined, boom - 0.5)
-        // Charge-up: the frame contracts and the light drains before the blast.
-        .to(q('.weapon-stage'), { scale: 0.97, duration: 0.35, ease: 'power2.in' }, boom - 0.4)
-        .to(q('.vignette-charge'), { opacity: 1, duration: 0.35 }, boom - 0.4)
-        // Flash
-        .to(q('.flash'), { opacity: 1, scale: 1, duration: 0.14, ease: 'power4.out' }, boom)
-        .to(q('.flash'), { opacity: 0, duration: 0.7, ease: 'power2.in' }, boom + 0.16)
-        // Shockwave rings
-        .to(
-          q('.shock'),
-          {
-            opacity: 0.85,
-            scale: 1,
-            duration: 0.1,
-            stagger: 0.07,
-          },
-          boom,
+        /* -- will-change, held open only for the window the stage is actually
+              moving. This is the `gpu-active` pattern the stylesheet documents,
+              applied from the timeline because the window is a slice of an
+              animation rather than a component lifetime. It lets the compositor
+              scale and fade an existing texture through the exit instead of
+              re-rasterising the weapon surface on every frame. Cleared straight
+              after — a layer left promoted costs memory for the whole page. */
+        .set(
+          q('.weapon-stage, .shot-bloom, .shot-ring'),
+          { willChange: 'transform, opacity' },
+          shot - 0.4,
         )
+
+        /* -- Sight picture. The anticipation for a shot is stillness and a
+              trigger break, not a charge-up: a frame that contracts while the
+              light drains is how you telegraph a bomb. */
+        .to(q('.reticle-dot'), { scale: 1.6, duration: 0.3, ease: 'power2.out' }, shot - 0.5)
+        .to(q('.weapon-stage'), { scale: 1.03, duration: 0.3, ease: 'power2.in' }, shot - 0.3)
         .to(
-          q('.shock'),
-          { scale: 3.4, opacity: 0, duration: 1.5, ease: 'power3.out', stagger: 0.07 },
-          boom + 0.08,
+          q('.trigger-blade'),
+          { rotate: -13, svgOrigin: '246 157', duration: 0.1, ease: 'power3.in' },
+          shot - 0.12,
         )
-        // Weapon is thrown apart by the blast
+
+        /* -- The discharge. These durations are frames, not tenths. A muzzle
+              flash is at full brightness in two frames and dark by eight; hold
+              it any longer and it stops being a shot and becomes a fireball,
+              which is exactly what the old finish was reading as. */
+        .to(q('.muzzle-star'), { opacity: 1, scale: 1, duration: 0.03, ease: 'power4.out' }, shot)
+        .to(q('.muzzle-core'), { opacity: 1, scale: 1, duration: 0.045, ease: 'power4.out' }, shot)
+        .to(q('.muzzle-gas'), { opacity: 1, scale: 1, duration: 0.07, ease: 'power3.out' }, shot)
         .to(
-          q('.part'),
-          {
-            x: () => gsap.utils.random(-900, 900),
-            y: () => gsap.utils.random(-560, 560),
-            rotate: () => gsap.utils.random(-220, 220),
-            scale: () => gsap.utils.random(0.4, 1.5),
-            opacity: 0,
-            duration: 1.1,
-            ease: 'power3.out',
-            stagger: { amount: 0.14, from: 'center' },
-          },
-          boom + 0.04,
+          q('.muzzle-star'),
+          { opacity: 0, scale: 0.45, duration: 0.07, ease: 'power2.in' },
+          shot + 0.05,
         )
-        // Debris shards
+        .to(q('.muzzle-core'), { opacity: 0, duration: 0.12, ease: 'power2.in' }, shot + 0.06)
         .to(
-          q('.shard'),
+          q('.muzzle-gas'),
+          { opacity: 0, scale: 1.55, duration: 0.2, ease: 'power2.out' },
+          shot + 0.07,
+        )
+
+        // Unburnt powder thrown down the bore. A narrow forward cone — debris
+        // leaving in every direction is the single clearest blast tell.
+        .to(
+          q('.spark'),
           {
             opacity: 1,
-            x: () => gsap.utils.random(-780, 780),
-            y: () => gsap.utils.random(-620, 620),
-            rotate: () => gsap.utils.random(-540, 540),
-            duration: 1.3,
+            x: () => gsap.utils.random(90, 300),
+            y: () => gsap.utils.random(-38, 38),
+            scaleX: () => gsap.utils.random(1.4, 3.6),
+            duration: 0.42,
             ease: 'power3.out',
-            stagger: 0.006,
+            stagger: 0.004,
           },
-          boom + 0.04,
+          shot + 0.01,
         )
-        .to(q('.shard'), { opacity: 0, duration: 0.5 }, boom + 0.9)
-        // HUD blows out
-        .to(q('.hud'), { opacity: 0, y: -30, filter: 'blur(10px)', duration: 0.6 }, boom + 0.05)
-        // Camera shake, decaying
+        .to(q('.spark'), { opacity: 0, duration: 0.22 }, shot + 0.22)
+
+        // Smoke off the bore, drifting downrange rather than mushrooming.
+        .to(
+          q('.muzzle-smoke'),
+          { opacity: 0.42, scale: 1, duration: 0.45, ease: 'power2.out' },
+          shot + 0.05,
+        )
+        .to(
+          q('.muzzle-smoke'),
+          { opacity: 0, scale: 2.1, x: 74, y: -30, duration: 1.1, ease: 'power1.out' },
+          shot + 0.22,
+        )
+
+        // The action cycles: bolt back, casing out, bolt home.
+        .to(q('#p-bolt'), { x: -46, duration: 0.06, ease: 'power4.out' }, shot + 0.02)
+        .to(q('#p-bolt'), { x: 0, duration: 0.14, ease: 'power3.in' }, shot + 0.1)
+        .fromTo(
+          q('.casing'),
+          { opacity: 1, x: 0, y: 0, rotate: 0 },
+          {
+            motionPath: {
+              path: [
+                { x: 46, y: -80 },
+                { x: 124, y: -34 },
+                { x: 186, y: 170 },
+              ],
+              curviness: 1.4,
+            },
+            rotate: 760,
+            opacity: 0,
+            duration: 1.05,
+            ease: 'power1.in',
+          },
+          shot + 0.06,
+        )
+
+        // Recoil. Mass goes backwards along the bore and the muzzle climbs,
+        // then the shooter walks it back down onto the target. That two-beat
+        // is the whole difference between a weapon firing and a charge going
+        // off underneath it.
+        //
+        // Translate and rotate only — deliberately no `scale`. Scaling this
+        // element re-rasterises everything under it (the ~120-node weapon
+        // surface plus the flash surface) on every frame of the tween, and
+        // that stall lands exactly on the shot. The punch is carried by the
+        // camera kick below, which moves the whole root as one layer instead.
+        .to(q('.weapon-stage'), { x: -92, rotate: -3, duration: 0.07, ease: 'power4.out' }, shot)
+        .to(q('.weapon-stage'), { x: 0, rotate: 0, duration: 0.9, ease: 'recoil' }, shot + 0.08)
+
+        // Frame blowout. The room is dark, so the flash takes the exposure
+        // with it — then the iris stops back down.
+        .to(q('.shot-bloom'), { opacity: 1, scale: 1, duration: 0.05, ease: 'power4.out' }, shot)
+        .to(q('.shot-bloom'), { opacity: 0, duration: 0.45, ease: 'power3.in' }, shot + 0.07)
+        // One pressure wave off the bore. Three concentric rings was the other
+        // half of the bomb read.
+        .to(q('.shot-ring'), { opacity: 0.8, scale: 0.12, duration: 0.02 }, shot)
+        .to(q('.shot-ring'), { opacity: 0, scale: 3.6, duration: 0.55, ease: 'power2.out' }, shot + 0.03)
+        .to(q('.vignette-charge'), { opacity: 1, duration: 0.55, ease: 'power2.out' }, shot + 0.1)
+
+        // Camera kick — one sharp punch along the bore axis, settled inside a
+        // third of a second. The long decaying omnidirectional shake it
+        // replaces is what a body feels standing next to an explosion.
         .to(
           rootRef.current,
           {
             keyframes: {
-              x: [0, -22, 19, -13, 9, -5, 0],
-              y: [0, 15, -12, 8, -5, 3, 0],
-              duration: 0.75,
+              x: [0, 28, -15, 8, -3, 0],
+              y: [0, -13, 7, -3, 1, 0],
+              duration: 0.34,
             },
             ease: 'none',
           },
-          boom,
+          shot,
         )
-        // Iris wipe out to the hero
+
+        // HUD clears and the camera runs down the bore into the hero. The
+        // weapon survives the shot — it was never the thing that went off.
+        .to(q('.hud'), { opacity: 0, y: -18, duration: 0.5 }, shot + 0.3)
+        .to(
+          q('.weapon-stage'),
+          { scale: 1.55, opacity: 0, duration: 1.0, ease: 'power2.in' },
+          shot + 0.5,
+        )
         .to(
           q('.curtain'),
           { clipPath: 'circle(0% at 50% 50%)', duration: 1.15, ease: 'power3.inOut' },
-          boom + 0.42,
+          shot + 0.42,
         )
-        .to(rootRef.current, { opacity: 0, duration: 0.35, ease: 'power2.in' }, boom + 1.35);
+        .to(rootRef.current, { opacity: 0, duration: 0.35, ease: 'power2.in' }, shot + 1.35)
+        .set(q('.weapon-stage, .shot-bloom, .shot-ring'), { willChange: 'auto' }, shot + 1.55);
 
       return () => {
         tl.kill();
@@ -356,7 +477,7 @@ export function Loader() {
           <VolumetricSmoke plumes={5} tone="warm" intensity={0.85} seed={3} />
         </div>
 
-        {/* Pre-blast light drain */}
+        {/* The iris stopping down after the flash blows the exposure out */}
         <div
           className="vignette-charge absolute inset-0 opacity-0"
           style={{
@@ -367,7 +488,7 @@ export function Loader() {
         {/* ---------------------------- WEAPON STAGE ---------------------------- */}
         <div className="absolute inset-0 flex items-center justify-center px-6">
           <div className="weapon-stage relative w-full max-w-[min(1100px,92vw)] gpu">
-            <svg viewBox="0 0 620 260" className="w-full" aria-hidden="true">
+            <svg viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} className="w-full" aria-hidden="true">
               <defs>
                 <linearGradient id="ld-body" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#69747c" />
@@ -397,6 +518,27 @@ export function Loader() {
                     <feMergeNode in="SourceGraphic" />
                   </feMerge>
                 </filter>
+
+                {/* Muzzle flash: white at the bore, amber through the gas,
+                    gone well before the edge. */}
+                <radialGradient id="ld-flash" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0%" stopColor="#ffffff" />
+                  <stop offset="28%" stopColor="#ffe9b0" stopOpacity="0.95" />
+                  <stop offset="60%" stopColor="#ff8a2e" stopOpacity="0.5" />
+                  <stop offset="100%" stopColor="#ff6a1a" stopOpacity="0" />
+                </radialGradient>
+                {/* Burning propellant leaving the bore — graded along the
+                    cone's axis so it thins out downrange. */}
+                <linearGradient id="ld-gas" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#fff4d2" stopOpacity="0.95" />
+                  <stop offset="36%" stopColor="#ffb347" stopOpacity="0.55" />
+                  <stop offset="100%" stopColor="#ff6a1a" stopOpacity="0" />
+                </linearGradient>
+                <radialGradient id="ld-smoke" cx="0.5" cy="0.5" r="0.5">
+                  <stop offset="0%" stopColor="#9aa4ac" stopOpacity="0.55" />
+                  <stop offset="60%" stopColor="#6f7981" stopOpacity="0.22" />
+                  <stop offset="100%" stopColor="#5c666e" stopOpacity="0" />
+                </radialGradient>
               </defs>
 
               {/* Ground shadow */}
@@ -505,7 +647,13 @@ export function Loader() {
                   strokeWidth="8"
                   strokeLinecap="round"
                 />
-                <path d="M246 157 L250 172" stroke="#9aa6af" strokeWidth="4" strokeLinecap="round" />
+                <path
+                  className="trigger-blade"
+                  d="M246 157 L250 172"
+                  stroke="#9aa6af"
+                  strokeWidth="4"
+                  strokeLinecap="round"
+                />
               </g>
 
               <g id="p-mag" className="part">
@@ -544,6 +692,129 @@ export function Loader() {
                 opacity="0"
               />
             </svg>
+
+            {/* ------------------------ MUZZLE FLASH ------------------------
+                A second surface over the first, sharing its viewBox and its
+                box exactly — so this draws in the weapon's own coordinate
+                space, scales with it, and rides the recoil, while being free
+                to spill past the frame. It has to be its own <svg>: the bore
+                sits at x=586 of a 620-wide viewBox, so inside the weapon's
+                surface the flash would be clipped 34 units out, and opening
+                that surface up instead would expose the parts flying in from
+                off-frame during the assembly.
+
+                Shapes are authored at absolute viewBox coordinates rather than
+                inside a translated <g>, so `svgOrigin: '586 125'` in the
+                timeline is unambiguously the bore.
+
+                Everything starts at opacity 0 in the markup — the browser
+                paints this HTML before React hydrates, which is well before
+                GSAP's opening set() calls can run. */}
+            <svg
+              viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+              className="pointer-events-none absolute inset-0 h-full w-full"
+              style={{ overflow: 'visible' }}
+              aria-hidden="true"
+            >
+              <ellipse
+                className="muzzle-smoke"
+                cx={BORE_X + 30}
+                cy={BORE_Y - 4}
+                rx="54"
+                ry="32"
+                fill="url(#ld-smoke)"
+                opacity="0"
+              />
+              <ellipse
+                className="muzzle-core"
+                cx={BORE_X + 26}
+                cy={BORE_Y}
+                rx="64"
+                ry="31"
+                fill="url(#ld-flash)"
+                opacity="0"
+              />
+              <path
+                className="muzzle-gas"
+                d="M586 114 L682 91 L764 125 L682 159 L586 136 Z"
+                fill="url(#ld-gas)"
+                opacity="0"
+              />
+              {/* The four-point bloom. The forward arm is the longest one —
+                  the gas is going somewhere, which is the entire point. */}
+              <path
+                className="muzzle-star"
+                d="M586 73 L597 113 L664 125 L597 137 L586 177 L575 137 L542 125 L575 113 Z"
+                fill="#fff7e2"
+                opacity="0"
+              />
+              {Array.from({ length: 16 }, (_, i) => (
+                <rect
+                  key={i}
+                  className="spark"
+                  x={BORE_X}
+                  y={BORE_Y - 1 + ((i % 5) - 2) * 0.6}
+                  width={2.5 + (i % 4)}
+                  height="1.8"
+                  rx="0.9"
+                  fill={i % 3 === 0 ? '#fff1c2' : i % 3 === 1 ? '#ffb347' : '#ff6a1a'}
+                  opacity="0"
+                />
+              ))}
+            </svg>
+
+          </div>
+        </div>
+
+        {/* --------------------- BLAST LIGHT ---------------------
+            A copy of the weapon stage's box, holding the light the shot
+            throws. It is a sibling of the stage rather than a child of it,
+            and that placement is the whole point: the stage transforms
+            through the recoil and the exit, and a light source over a
+            thousand pixels across sitting inside a transforming subtree
+            forces the browser to re-rasterise that entire subtree — the
+            weapon surface, the flash surface and the light — on every frame
+            of the shot. Which is precisely when it must not.
+
+            Out here it is composited on its own. The cost of the split is
+            that the light no longer tracks the 92px recoil, which at this
+            size is not something you can see.
+
+            `aspectRatio` reproduces the height the weapon surface gives the
+            real stage, so the bore offset below lands on the same point. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 flex items-center justify-center px-6"
+        >
+          <div
+            className="relative w-full max-w-[min(1100px,92vw)]"
+            style={{ aspectRatio: `${VIEW_W} / ${VIEW_H}` }}
+          >
+            <div
+              className="absolute"
+              style={{
+                left: `${(BORE_X / VIEW_W) * 100}%`,
+                top: `${(BORE_Y / VIEW_H) * 100}%`,
+              }}
+            >
+              {/* No `filter: blur()` here. The gradient's own falloff is the
+                  softness — a blur on top of it is a full offscreen pass over
+                  ~1.2 million pixels for a difference nobody can point to.
+                  Same reasoning the map dioramas use for their clouds. */}
+              <div
+                className="shot-bloom absolute left-0 top-0 h-[58vmax] w-[58vmax] rounded-full opacity-0"
+                style={{
+                  background:
+                    'radial-gradient(circle, #fff 0%, #fff2cc 7%, #ffc46a 16%, #ff8a2e 28%, rgb(255 106 26 / .3) 44%, transparent 68%)',
+                }}
+              />
+              {/* Border only. A 44px box-shadow on an element scaling 30× is
+                  repainted at every intermediate size. */}
+              <div
+                className="shot-ring absolute left-0 top-0 h-[18vmax] w-[18vmax] rounded-full opacity-0"
+                style={{ border: '2px solid rgb(255 200 120 / .75)' }}
+              />
+            </div>
           </div>
         </div>
 
@@ -606,44 +877,6 @@ export function Loader() {
           </div>
         </div>
 
-        {/* --------------------------- DETONATION --------------------------- */}
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          {/* Core flash */}
-          <div
-            className="flash absolute h-[70vmax] w-[70vmax] rounded-full opacity-0"
-            style={{
-              background:
-                'radial-gradient(circle, #fff 0%, #ffd166 14%, #ff6a1a 30%, rgb(224 23 48 / .55) 46%, transparent 68%)',
-              filter: 'blur(6px)',
-            }}
-          />
-          {/* Shockwave rings */}
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="shock absolute rounded-full opacity-0"
-              style={{
-                width: `${26 + i * 8}vmax`,
-                height: `${26 + i * 8}vmax`,
-                border: `${3 - i}px solid rgb(255 ${150 - i * 40} ${60 - i * 20} / ${0.85 - i * 0.2})`,
-                boxShadow: '0 0 60px rgb(255 106 26 / .55)',
-              }}
-            />
-          ))}
-          {/* Debris */}
-          {Array.from({ length: 34 }, (_, i) => (
-            <div
-              key={i}
-              className="shard absolute opacity-0"
-              style={{
-                width: `${3 + (i % 5) * 2}px`,
-                height: `${1 + (i % 3)}px`,
-                background: i % 3 === 0 ? '#ffd166' : i % 3 === 1 ? '#ff6a1a' : '#8b969e',
-                boxShadow: '0 0 8px currentColor',
-              }}
-            />
-          ))}
-        </div>
       </div>
 
       {/* Skip — always reachable, never in the way */}

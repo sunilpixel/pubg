@@ -788,7 +788,14 @@ export default function Battlefield({
       // but the canvas used to keep rendering the full scene at 60fps for the
       // entire rest of the page. Suspending the loop once it scrolls out of
       // view hands the GPU back to everything below.
-      frameloop={active ? "always" : "never"}
+      //
+      // "demand" rather than "never" for the inactive state. Under "never" R3F
+      // does not draw at all, so a canvas mounted inactive compiles nothing —
+      // and the twenty-odd shader programs below would all land on whichever
+      // frame first sets active, which is the reveal. "demand" draws once on
+      // mount, which is all <Preload all /> needs to compile the scene, and
+      // then stops. Idle cost is the same; the compile has already happened.
+      frameloop={active ? "always" : "demand"}
       gl={{
         antialias: false, // FXAA-free; the grain overlay hides aliasing anyway
         powerPreference: "high-performance",

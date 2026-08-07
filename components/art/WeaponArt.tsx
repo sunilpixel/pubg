@@ -1,6 +1,7 @@
 'use client';
 
-import { memo, useId } from 'react';
+import { memo } from 'react';
+import { stableId } from '@/lib/utils';
 import type { Silhouette } from '@/lib/types';
 
 /**
@@ -95,7 +96,10 @@ function WeaponArtBase({
   sheen = true,
   lod = 'high',
 }: Props) {
-  const uid = useId().replace(/[:]/g, '');
+  // Seeded from the drawing's own inputs rather than the React tree — see
+  // stableId. Only the accent gradient actually varies between instances, but
+  // the spec rides along so a future spec-dependent def stays correctly keyed.
+  const uid = stableId(`weapon:${accent}|${JSON.stringify(spec)}`);
   const low = lod === 'low';
   // Low detail points at the shared defs; high mints its own so the accent
   // colour and machining pattern can vary per instance.

@@ -95,7 +95,11 @@ export function Gallery() {
           aria-hidden
           onClick={() => active && toggle(active)}
           className={cn(
-            'fixed inset-0 z-[115] bg-void/92 backdrop-blur-2xl transition-opacity duration-700',
+            // No `backdrop-blur`: at 96% opaque black there is nothing legible
+            // behind this to blur, and a full-viewport backdrop filter with an
+            // opacity transition is one of the most expensive things a browser
+            // can be asked to composite.
+            'fixed inset-0 z-[115] bg-void/96 transition-opacity duration-500',
             active ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
           )}
         />

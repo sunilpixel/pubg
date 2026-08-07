@@ -63,7 +63,7 @@ export function Navbar() {
   const [active, setActive] = useState('');
   const [open, setOpen] = useState(false);
 
-  const { ready } = useExperience();
+  const { ready, audioEnabled, toggleAudio } = useExperience();
   const reduced = usePrefersReducedMotion();
 
   useMagnetic(ctaRef, { strength: 0.3 });
@@ -224,6 +224,41 @@ export function Navbar() {
               <span className="pointer-events-none absolute inset-0 -translate-x-full skew-x-[-24deg] bg-white/45 transition-transform duration-[800ms] ease-[cubic-bezier(.16,1,.3,1)] group-hover:translate-x-full" />
               <span className="relative">Pre-Register</span>
             </a>
+
+            {/* Sound. Every weapon SFX is gated behind this, so it lives in the
+                bar rather than only at the bottom of the page. */}
+            <button
+              type="button"
+              onClick={toggleAudio}
+              aria-pressed={audioEnabled}
+              aria-label={audioEnabled ? 'Turn sound off' : 'Turn sound on'}
+              title={audioEnabled ? 'Sound on' : 'Sound off'}
+              data-cursor="target"
+              className={cn(
+                'grid h-10 w-10 place-items-center rounded-full border transition-colors duration-300',
+                audioEnabled
+                  ? 'border-ember/70 bg-ember/15'
+                  : 'border-white/10 bg-white/[0.04] hover:border-ember/50',
+              )}
+            >
+              <span className="flex h-3.5 items-end gap-[3px]" aria-hidden>
+                {[0.45, 1, 0.6, 0.85].map((scale, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      'w-0.5 transition-transform duration-300',
+                      audioEnabled ? 'bg-ember' : 'bg-smoke',
+                    )}
+                    style={{
+                      height: '100%',
+                      transform: `scaleY(${audioEnabled ? scale : 0.14})`,
+                      transformOrigin: 'bottom',
+                      transitionDelay: `${i * 60}ms`,
+                    }}
+                  />
+                ))}
+              </span>
+            </button>
 
             {/* Burger */}
             <button

@@ -1,31 +1,34 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { gsap, Flip, ScrollTrigger } from '@/lib/gsap';
-import { useGsapContext } from '@/hooks/useGsapContext';
-import { useRevealOnce } from '@/hooks/useRevealOnce';
-import { useIsomorphicLayoutEffect } from '@/hooks/useIsomorphicLayoutEffect';
-import { usePrefersReducedMotion } from '@/hooks/useMediaQuery';
-import { useExperience } from '@/components/providers/ExperienceProvider';
-import { SectionHeading } from '@/components/ui/SectionHeading';
-import { ParticleField } from '@/components/ui/ParticleField';
-import { WeaponArtDefs } from '@/components/art/WeaponArt';
-import { WeaponCard } from '@/components/weapons/WeaponCard';
-import { WeaponDetail } from '@/components/weapons/WeaponDetail';
-import { WEAPON_CATEGORIES, WEAPONS } from '@/lib/data/weapons';
-import { playUi } from '@/lib/audio';
-import type { Weapon, WeaponCategoryId } from '@/lib/types';
-import { cn } from '@/lib/utils';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { gsap, Flip, ScrollTrigger } from "@/lib/gsap";
+import { useGsapContext } from "@/hooks/useGsapContext";
+import { useRevealOnce } from "@/hooks/useRevealOnce";
+import { useIsomorphicLayoutEffect } from "@/hooks/useIsomorphicLayoutEffect";
+import { usePrefersReducedMotion } from "@/hooks/useMediaQuery";
+import { useExperience } from "@/components/providers/ExperienceProvider";
+import { SectionHeading } from "@/components/ui/SectionHeading";
+import { ParticleField } from "@/components/ui/ParticleField";
+import { WeaponArtDefs } from "@/components/art/WeaponArt";
+import { WeaponCard } from "@/components/weapons/WeaponCard";
+import { WeaponDetail } from "@/components/weapons/WeaponDetail";
+import { WEAPON_CATEGORIES, WEAPONS } from "@/lib/data/weapons";
+import { playUi } from "@/lib/audio";
+import type { Weapon, WeaponCategoryId } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-type Filter = WeaponCategoryId | 'all';
+type Filter = WeaponCategoryId | "all";
 
 export function WeaponVault() {
   const sectionRef = useRef<HTMLElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const pendingFlip = useRef<Flip.FlipState | null>(null);
 
-  const [filter, setFilter] = useState<Filter>('all');
-  const [selected, setSelected] = useState<{ weapon: Weapon; origin: HTMLElement } | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [selected, setSelected] = useState<{
+    weapon: Weapon;
+    origin: HTMLElement;
+  } | null>(null);
 
   /**
    * How many cards are actually in the DOM.
@@ -42,7 +45,8 @@ export function WeaponVault() {
   const { setOverlayOpen, audioEnabled } = useExperience();
   const reduced = usePrefersReducedMotion();
 
-  const matching = filter === 'all' ? WEAPONS : WEAPONS.filter((w) => w.category === filter);
+  const matching =
+    filter === "all" ? WEAPONS : WEAPONS.filter((w) => w.category === filter);
   const visible = matching.slice(0, mountBudget);
 
   /**
@@ -84,9 +88,12 @@ export function WeaponVault() {
       if (audioEnabled) playUi({ pitch: 1.2 });
 
       if (!reduced && gridRef.current) {
-        pendingFlip.current = Flip.getState(gridRef.current.querySelectorAll('.weapon-card'), {
-          props: 'opacity',
-        });
+        pendingFlip.current = Flip.getState(
+          gridRef.current.querySelectorAll(".weapon-card"),
+          {
+            props: "opacity",
+          },
+        );
       }
       setFilter(next);
     },
@@ -100,7 +107,7 @@ export function WeaponVault() {
 
     Flip.from(state, {
       duration: 0.75,
-      ease: 'cinema',
+      ease: "cinema",
       scale: true,
       absolute: true,
       stagger: 0.025,
@@ -109,10 +116,23 @@ export function WeaponVault() {
         gsap.fromTo(
           elements,
           { opacity: 0, scale: 0.86, y: 40 },
-          { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: 'cinema', stagger: 0.03 },
+          {
+            opacity: 1,
+            scale: 1,
+            y: 0,
+            duration: 0.6,
+            ease: "cinema",
+            stagger: 0.03,
+          },
         ),
       onLeave: (elements) =>
-        gsap.to(elements, { opacity: 0, scale: 0.86, y: -30, duration: 0.4, ease: 'power2.in' }),
+        gsap.to(elements, {
+          opacity: 0,
+          scale: 0.86,
+          y: -30,
+          duration: 0.4,
+          ease: "power2.in",
+        }),
       onComplete: () => ScrollTrigger.refresh(),
     });
   }, [filter]);
@@ -128,21 +148,30 @@ export function WeaponVault() {
   // Cards that have already played are never re-hidden.
   useRevealOnce(
     gridRef,
-    '.weapon-card',
+    ".weapon-card",
     { y: 60, duration: 0.8, stagger: 0.05 },
     [visible.length, filter],
   );
-  useRevealOnce(sectionRef, '.filter-chip', { y: 20, duration: 0.55, stagger: 0.03 });
+  useRevealOnce(sectionRef, ".filter-chip", {
+    y: 20,
+    duration: 0.55,
+    stagger: 0.03,
+  });
 
   useGsapContext(
     () => {
       if (reduced) return;
 
       // Slow background parallax on the vault's ambient glow.
-      gsap.to('.vault-glow', {
+      gsap.to(".vault-glow", {
         yPercent: -22,
-        ease: 'none',
-        scrollTrigger: { trigger: sectionRef.current, start: 'top bottom', end: 'bottom top', scrub: true },
+        ease: "none",
+        scrollTrigger: {
+          trigger: sectionRef.current,
+          start: "top bottom",
+          end: "bottom top",
+          scrub: true,
+        },
       });
     },
     sectionRef,
@@ -177,7 +206,7 @@ export function WeaponVault() {
         className="vault-glow pointer-events-none absolute inset-x-0 top-0 h-[70vh] opacity-70"
         style={{
           background:
-            'radial-gradient(60% 50% at 50% 0%, rgb(255 106 26 / .14), transparent 70%)',
+            "radial-gradient(60% 50% at 50% 0%, rgb(255 106 26 / .14), transparent 70%)",
         }}
       />
       <div className="pointer-events-none absolute inset-0">
@@ -195,15 +224,21 @@ export function WeaponVault() {
 
         {/* --------------------------- Filter rail --------------------------- */}
         <div className="filter-rail mt-14 -mx-5 overflow-x-auto px-5 pb-2 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex min-w-max items-center gap-2" role="tablist" aria-label="Weapon categories">
+          <div
+            className="flex min-w-max items-center gap-2"
+            role="tablist"
+            aria-label="Weapon categories"
+          >
             <FilterChip
               label="All Classes"
               short={String(WEAPONS.length)}
-              active={filter === 'all'}
-              onClick={() => changeFilter('all')}
+              active={filter === "all"}
+              onClick={() => changeFilter("all")}
             />
             {WEAPON_CATEGORIES.map((category) => {
-              const count = WEAPONS.filter((w) => w.category === category.id).length;
+              const count = WEAPONS.filter(
+                (w) => w.category === category.id,
+              ).length;
               return (
                 <FilterChip
                   key={category.id}
@@ -221,10 +256,10 @@ export function WeaponVault() {
         <p
           key={filter}
           className="mt-6 max-w-xl font-mono text-[11px] uppercase leading-relaxed tracking-[0.16em] text-ash"
-          style={{ animation: 'none' }}
+          style={{ animation: "none" }}
         >
-          {filter === 'all'
-            ? 'Full manifest — every class currently in circulation.'
+          {filter === "all"
+            ? "Full manifest — every class currently in circulation."
             : WEAPON_CATEGORIES.find((c) => c.id === filter)?.blurb}
         </p>
 
@@ -232,10 +267,15 @@ export function WeaponVault() {
         <div
           ref={gridRef}
           className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-          style={{ perspective: '1600px' }}
+          style={{ perspective: "1600px" }}
         >
           {visible.map((weapon, index) => (
-            <WeaponCard key={weapon.id} weapon={weapon} index={index} onSelect={openWeapon} />
+            <WeaponCard
+              key={weapon.id}
+              weapon={weapon}
+              index={index}
+              onSelect={openWeapon}
+            />
           ))}
         </div>
       </div>
@@ -270,11 +310,11 @@ function FilterChip({
       onClick={onClick}
       data-cursor="target"
       className={cn(
-        'filter-chip group relative shrink-0 overflow-hidden rounded-full px-5 py-3',
-        'font-mono text-[10px] uppercase tracking-[0.2em] transition-all duration-400 ease-[cubic-bezier(.16,1,.3,1)]',
+        "filter-chip group relative shrink-0 overflow-hidden rounded-full px-5 py-3",
+        "font-mono text-[10px] uppercase tracking-[0.2em] transition-all duration-400 ease-[cubic-bezier(.16,1,.3,1)]",
         active
-          ? 'border border-ember/60 bg-ember/12 text-ember shadow-[0_0_28px_-8px_rgb(255_106_26/.9)]'
-          : 'border border-white/10 bg-white/[0.03] text-smoke hover:border-white/25 hover:text-chalk',
+          ? "border border-ember/60 bg-ember/12 text-ember shadow-[0_0_28px_-8px_rgb(255_106_26/.9)]"
+          : "border border-white/10 bg-white/[0.03] text-smoke hover:border-white/25 hover:text-chalk",
       )}
     >
       <span className="pointer-events-none absolute inset-0 -translate-x-full skew-x-[-24deg] bg-white/12 transition-transform duration-700 ease-[cubic-bezier(.16,1,.3,1)] group-hover:translate-x-full" />
@@ -282,8 +322,8 @@ function FilterChip({
         {label}
         <span
           className={cn(
-            'rounded-full px-1.5 py-0.5 text-[9px] tabular-nums transition-colors',
-            active ? 'bg-ember/25 text-ember' : 'bg-white/8 text-ash',
+            "rounded-full px-1.5 py-0.5 text-[9px] tabular-nums transition-colors",
+            active ? "bg-ember/25 text-ember" : "bg-white/8 text-ash",
           )}
         >
           {short}

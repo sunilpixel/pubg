@@ -1,6 +1,7 @@
 'use client';
 
-import { memo, useId } from 'react';
+import { memo } from 'react';
+import { stableId } from '@/lib/utils';
 import type { Operator } from '@/lib/types';
 
 /**
@@ -12,7 +13,7 @@ import type { Operator } from '@/lib/types';
 type Props = { operator: Operator; className?: string };
 
 function OperatorPortraitBase({ operator, className }: Props) {
-  const uid = useId().replace(/:/g, '');
+  const uid = stableId(`operator:${operator.id}`);
   const id = (n: string) => `${n}-${uid}`;
   const h = operator.hue;
   const accent = `hsl(${h} 92% 60%)`;
