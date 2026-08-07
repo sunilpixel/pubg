@@ -32,8 +32,8 @@ export function Statistics() {
   // Content reveals run on IntersectionObserver; only the decorative SVG
   // line-drawing below stays on ScrollTrigger, because if that one fails to
   // fire the radar simply renders complete rather than disappearing.
-  useRevealOnce(sectionRef, '.stat-tile', { y: 50, duration: 0.75, stagger: 0.05 });
-  useRevealOnce(sectionRef, '.achievement-row', { y: 30, duration: 0.6, stagger: 0.045 });
+  useRevealOnce(sectionRef, '.stat-tile', { y: 50, duration: 0.75, stagger: 0.06 });
+  useRevealOnce(sectionRef, '.achievement-row', { y: 26, duration: 0.6, stagger: 0.05 });
 
   useGsapContext(
     () => {

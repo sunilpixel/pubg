@@ -35,7 +35,7 @@ export function Gallery() {
 
   // IntersectionObserver-driven so the tiles can never be left at opacity 0 by
   // a mis-measured ScrollTrigger. See useRevealOnce.
-  useRevealOnce(sectionRef, '.shot-tile', { y: 60, duration: 0.75, stagger: 0.05 });
+  useRevealOnce(sectionRef, '.shot-tile', { y: 60, duration: 0.8, stagger: 0.05 });
 
   /* -------- Flip the tile between its grid slot and fullscreen -------- */
   const toggle = useCallback(
@@ -100,6 +100,9 @@ export function Gallery() {
           )}
         />
 
+        {/* No `perspective` here: a perspective ancestor becomes the containing
+            block for `position: fixed` descendants, and a tile switches to
+            fixed when it expands to fullscreen. It would break the lightbox. */}
         <div className="shot-grid mt-16 grid auto-rows-[220px] grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {GALLERY.map((shot) => (
             <ShotTile

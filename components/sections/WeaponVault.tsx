@@ -123,7 +123,15 @@ export function WeaponVault() {
    * plays, leaving the whole grid invisible — and pinned sections above this
    * one make mis-measurement easy. See useRevealOnce.
    */
-  useRevealOnce(gridRef, '.weapon-card', { y: 70, duration: 0.75, stagger: 0.04 });
+  // Re-runs when the card set changes — on filter, and when the remaining
+  // cards mount after first paint — so newly added cards are observed too.
+  // Cards that have already played are never re-hidden.
+  useRevealOnce(
+    gridRef,
+    '.weapon-card',
+    { y: 60, duration: 0.8, stagger: 0.05 },
+    [visible.length, filter],
+  );
   useRevealOnce(sectionRef, '.filter-chip', { y: 20, duration: 0.55, stagger: 0.03 });
 
   useGsapContext(

@@ -26,7 +26,7 @@ export function Operators() {
 
   // IntersectionObserver-driven so the cards can never be left at opacity 0 by
   // a mis-measured ScrollTrigger. See useRevealOnce.
-  useRevealOnce(sectionRef, '.operator-card', { y: 70, duration: 0.8, stagger: 0.06 });
+  useRevealOnce(sectionRef, '.operator-card', { y: 60, duration: 0.8, stagger: 0.07 });
 
   return (
     <section

@@ -33,9 +33,9 @@ export function Maps() {
   // cards permanently at opacity 0 when its start position was mis-measured
   // because of the pinned sections above this one.
   useRevealOnce(sectionRef, ".map-card", {
-    y: 48,
-    duration: 0.7,
-    stagger: 0.05,
+    y: 60,
+    duration: 0.8,
+    stagger: 0.07,
   });
 
   useGsapContext(
