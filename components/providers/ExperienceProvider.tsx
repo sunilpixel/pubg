@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -25,7 +26,7 @@ type ExperienceState = {
    */
   preparing: boolean;
   markPreparing: () => void;
-  /** Sound is opt-in — browsers block autoplay and it is the polite default. */
+  /** Sound is on by default; the toggle lets anyone mute the whole experience. */
   audioEnabled: boolean;
   toggleAudio: () => void;
   /** Any fullscreen overlay (weapon detail, lightbox) locks scroll + cursor. */
@@ -38,7 +39,7 @@ const ExperienceContext = createContext<ExperienceState | null>(null);
 export function ExperienceProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [preparing, setPreparing] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
 
   const markReady = useCallback(() => setReady(true), []);
@@ -50,6 +51,23 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
     if (!audioEnabled) unlockAudio();
     setAudioEnabled((v) => !v);
   }, [audioEnabled]);
+
+  /**
+   * Sound starts on, but a page that has never been touched has no audio
+   * permission — an AudioContext built outside a gesture comes up suspended and
+   * everything scheduled into it is lost. So prime it on the very first
+   * interaction of any kind, then get out of the way.
+   */
+  useEffect(() => {
+    const events = ['pointerdown', 'keydown', 'touchstart'] as const;
+    const detach = () => events.forEach((e) => window.removeEventListener(e, prime));
+    function prime() {
+      unlockAudio();
+      detach();
+    }
+    events.forEach((e) => window.addEventListener(e, prime, { passive: true }));
+    return detach;
+  }, []);
 
   const value = useMemo(
     () => ({

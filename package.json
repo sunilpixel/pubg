@@ -2,11 +2,11 @@
   "name": "blackout-protocol",
   "version": "1.0.0",
   "private": true,
-  "description": "BLACKOUT PROTOCOL — a cinematic AAA battle-royale reveal experience.",
+  "description": "BLACKOUT PROTOCOL \u2014 a cinematic AAA battle-royale reveal experience.",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node init && next dev",
+    "build": "node init && next build",
+    "start": "node init && next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
